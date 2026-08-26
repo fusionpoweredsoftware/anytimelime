@@ -39,7 +39,7 @@ done <<< "$json_env"
 
 # Refuse to launch if the key or models are still placeholders.
 case "${ANTHROPIC_AUTH_TOKEN:-}" in
-  ""|"YOUR_OPENROUTER_API_KEY_HERE"|*[Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr]*)
+  ""|"YOUR_OPENROUTER_API_KEY_HERE"|*[Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr]*|*[Pp][Aa][Ss][Tt][Ee]*|*[Yy][Oo][Uu][Rr]*[Kk][Ee][Yy]*)
     echo "or: ANTHROPIC_AUTH_TOKEN is still the placeholder." >&2
     echo "     Put your real OpenRouter key (sk-or-...) in $CONFIG, then re-run." >&2
     exit 1

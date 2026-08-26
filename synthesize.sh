@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 #
-# synthesize.sh — the self-hosting loop: probe free OpenRouter models, then
-# ask a free model to synthesize the results and pick the tier assignments
-# for Claude Code. Writes openrouter-free.config.json on success; falls
-# back to the order-of-appearance heuristic if synthesis fails.
+# synthesize.sh — the self-hosting loop: probe free models across the
+# internet, then ask a free model to synthesize the results and pick the
+# tier assignments for Claude Code. Writes openrouter-free.config.json on
+# success; falls back to the order-of-appearance heuristic if synthesis fails.
+#
+# The probe (free-scan.sh) now sweeps the whole internet (research.sh's
+# candidates.json), but the CONFIG is still OpenRouter-shaped — or.sh / lime.sh
+# hardcode ANTHROPIC_BASE_URL=openrouter. So tiers are assigned from the
+# OPENROUTER-passing subset only. The full multi-vendor roster lives in the
+# results JSON and is published to latest.json by blog-gen. Cross-vendor
+# serving is Phase E.
 #
 # Intended to run daily/hourly from cron or launchd:
 #   ./synthesize.sh            # probe + synthesize + write config
@@ -32,24 +39,39 @@ exec >> "$LOG" 2>&1
 echo "=== synthesize run — $(date '+%Y-%m-%d %H:%M:%S') ==="
 
 # --- 1. Discover + probe (reuses free-scan.sh) -----------------------------
+# free-scan writes a full multi-vendor results JSON; we read that instead of
+# parsing stdout so we know each passing model's base_url (to filter to the
+# OpenRouter subset the config can actually launch).
 PROBE_OUT="$SCRIPT_DIR/.probe-results.txt"
-"$SCRIPT_DIR/free-scan.sh" | tee "$PROBE_OUT"
+RESULTS_JSON="$SCRIPT_DIR/.probe-results.json"
+# `|| true`: free-scan exits 1 on a zero-passing day (or zero candidates). We
+# handle those below by reading the results JSON / keeping the existing config,
+# so don't let set -e abort us mid-run.
+FREE_SCAN_RESULTS_JSON="$RESULTS_JSON" "$SCRIPT_DIR/free-scan.sh" | tee "$PROBE_OUT" || true
 
-PASSING=$(awk '/^=== Passing/{f=1;next} f{if($0=="")exit; sub(/^  /,""); print}' "$PROBE_OUT" || true)
-if [ -z "$PASSING" ]; then
-  echo "synthesize: nothing passed; keeping existing config." >&2
+if [ ! -s "$RESULTS_JSON" ]; then
+  echo "synthesize: free-scan produced no results JSON — aborting." >&2
   exit 1
 fi
-PASS_ARR=$(echo "$PASSING" | jq -R . | jq -s .)
+
+# OpenRouter-passing subset: PASS verdict + openrouter base_url.
+PASS_ARR=$(jq -c '[.results[]
+                  | select((.verdict//"")|startswith("PASS"))
+                  | select((.base_url//"")|contains("openrouter.ai"))
+                  | .id]' "$RESULTS_JSON")
+
+if [ "$(jq 'length' <<<"$PASS_ARR")" -eq 0 ]; then
+  echo "synthesize: no OpenRouter model passed; keeping existing config." >&2
+  echo "            (Multi-vendor passing models, if any, are in $RESULTS_JSON.)" >&2
+  exit 1
+fi
+PASSING=$(jq -r '.[]' <<<"$PASS_ARR")
 
 # --- 2. Synthesize: a free model picks the tiers ---------------------------
 # Give it the full probe evidence (latency, pass/fail, errors) plus the
-# passing list, and ask for a tiering decision as strict JSON.
+# OpenRouter passing list, and ask for a tiering decision as strict JSON.
 EVIDENCE=$(grep -v '^===' "$PROBE_OUT" | head -60 | jq -R . | jq -s .)
 
-# Build the evidence blob once, then post it. (This used to pipe one jq into
-# curl while a process substitution silently overrode curl's stdin — the
-# piped copy went nowhere. One payload, one path.)
 CTX=$(jq -n --argjson passing "$PASS_ARR" --argjson evidence "$EVIDENCE" \
   '{passing: $passing, probe_evidence: $evidence}')
 
@@ -88,7 +110,7 @@ fi
 
 echo "Assignment: $ASSIGNMENT"
 
-# Publish the passing order (failover list) for the smart proxy — keyless.
+# Publish the OpenRouter passing order (failover list) for the smart proxy.
 mkdir -p "$SCRIPT_DIR/public"
 jq -n --argjson p "$PASS_ARR" '{order: $p, updated: (now | todateiso8601)}' \
   > "$SCRIPT_DIR/public/models.json"

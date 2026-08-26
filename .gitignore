@@ -3,11 +3,14 @@ config.json
 openrouter.config.json
 openrouter-free.config.json
 tokenra.config.json
+keys.config.json
 # Local state / logs / scratch
 synthesize.log
 .lime-cursor
 rotation.weights.json
 .probe-results.txt
+.probe-results.json
+candidates.json
 public/models.json
 server/data/
 .DS_Store
