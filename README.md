@@ -51,6 +51,11 @@ becomes a real option instead of a gamble.
 
 It runs on $0 of inference. The loop closes on itself.
 
+The daily publisher that writes anytimelime.com/blog is **not** in this
+repo — it pushes to two private repos and is useless without them, so it
+lives beside the archive it maintains. This repo is the part you can
+actually download and run.
+
 ## The scripts
 
 | Script | What it does |
@@ -58,9 +63,8 @@ It runs on $0 of inference. The loop closes on itself.
 | `free-scan.sh` | Discover the free catalog, probe candidates in parallel, report who passed and how fast. `--list-only` for a no-probe catalog peek. |
 | `synthesize.sh` | Probe, then hand the evidence to a free model and let it assign the tiers. Falls back to a heuristic if the model talks nonsense. Logs to `synthesize.log`. |
 | `lime.sh` | The smart launcher. Fetches today's roster from the live endpoint, merges your key, rotates across the passing models, launches Claude Code. Falls back to your last local scan if the endpoint is down. |
-| `blog-gen.sh` | The daily engine. Probes, has a free model write the prose, builds the results table deterministically, publishes the post + `latest.json`, mirrors to the archive, pushes. |
 | `or.sh` | The dumb launcher — export one frozen config's vars for a single `claude` process, leaving your shell untouched. |
-| `lime-pull.sh` | Fetch keyless tier assignments from a self-hosted server and merge in your local key. |
+| `server/lime-pull.sh` | Fetch keyless tier assignments from a self-hosted server and merge in your local key. |
 | `server/` | Docker packaging: the scan loop plus an Anthropic-compatible `/v1/messages` proxy with streaming and failover, for serving a userbase without per-user keys. |
 
 ## Usage
@@ -97,9 +101,8 @@ OPENROUTER_API_KEY=sk-or-... docker compose -f server/docker-compose.yml up -d -
 | `FREE_SCAN_TIMEOUT` | `60` | Per-probe timeout, seconds. |
 | `LIME_ENDPOINT` | `https://anytimelime.com/blog/latest.json` | Roster source. |
 | `LIME_ROTATE` | `1` | Round-robin across the roster. `0` uses the published tiers. |
-| `LIME_HOST` | `http://localhost:8042` | Self-hosted server `lime-pull.sh` fetches from. |
+| `LIME_HOST` | `http://localhost:8042` | Self-hosted server `server/lime-pull.sh` fetches from. |
 | `SYNTH_MODEL` | `openrouter/free` | Model that assigns the tiers. |
-| `BLOG_MODEL` | — | Force a specific model to write the blog prose. |
 
 ## Keys
 

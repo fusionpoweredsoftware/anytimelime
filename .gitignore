@@ -7,7 +7,6 @@ tokenra.config.json
 synthesize.log
 .lime-cursor
 rotation.weights.json
-.blog-probe.*
 .probe-results.txt
 public/models.json
 server/data/
