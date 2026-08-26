@@ -202,13 +202,27 @@ if [ "${#PASSING[@]}" -eq 0 ]; then
 fi
 
 # Tiering heuristic (synthesize.sh replaces this with a model's judgment):
-#   OPUS/SONNET = first passing model — biggest context, does the real work.
-#   HAIKU       = fastest passing model, measured. Background duty is a
-#                 latency job, so pick on the number we actually recorded.
+#   OPUS   = first passing model — biggest context, does the real work.
+#   SONNET = the NEXT passing model, so the two work tiers are different
+#            endpoints. Assigning both to the same model wastes a slot and
+#            puts all the load on one free tier.
+#   HAIKU  = fastest passing model, measured, preferring one not already
+#            carrying a tier. Background duty is a latency job, so pick on
+#            the number we actually recorded.
+# Each rule degrades gracefully: with one passing model all three collapse
+# onto it, which is correct — there is nothing else to hand out.
 OPUS="${PASSING[0]}"
-SONNET="${PASSING[0]}"
-HAIKU="$(awk -F'\t' '$3 ~ /^PASS/ {print $1"\t"$2}' "$RESULTS_TSV" \
-         | sort -n | head -1 | cut -f2)"
+SONNET="${PASSING[1]:-${PASSING[0]}}"
+
+FASTEST_FIRST="$(awk -F'\t' '$3 ~ /^PASS/ {print $1"\t"$2}' "$RESULTS_TSV" \
+                 | sort -n | cut -f2)"
+HAIKU=""
+while IFS= read -r m; do
+  [ -z "$m" ] && continue
+  if [ "$m" != "$OPUS" ] && [ "$m" != "$SONNET" ]; then HAIKU="$m"; break; fi
+done <<< "$FASTEST_FIRST"
+# Roster too small for a distinct third: fall back to the plain fastest.
+[ -z "$HAIKU" ] && HAIKU="$(printf '%s\n' "$FASTEST_FIRST" | head -1)"
 [ -z "$HAIKU" ] && HAIKU="${PASSING[${#PASSING[@]}-1]}"
 
 jq -n \

@@ -7,8 +7,7 @@ tokenra.config.json
 synthesize.log
 .lime-cursor
 rotation.weights.json
-.blog-probe.*
 .probe-results.txt
 public/models.json
-project42/data/
+server/data/
 .DS_Store

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# entrypoint.sh — Project 42 container loop.
+# entrypoint.sh — anytimelime server container loop.
 #
 # 1. Materializes the OpenRouter key from env into openrouter.config.json
 #    (so the key never gets baked into the image).
