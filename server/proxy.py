@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-proxy.py — Project 42 smart access proxy.
+proxy.py — anytimelime smart access proxy.
 
 Exposes an Anthropic-compatible /v1/messages endpoint that routes to
 whichever free OpenRouter model currently holds each tier (per
@@ -25,7 +25,7 @@ import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-APP_DIR = os.environ.get("P42_APP_DIR", "/app")
+APP_DIR = os.environ.get("LIME_APP_DIR", "/app")
 CONFIG_PATH = os.path.join(APP_DIR, "openrouter-free.config.json")
 MODELS_PATH = os.path.join(APP_DIR, "public", "models.json")
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -236,7 +236,7 @@ def stream_upstream(handler, body, model):
     handler.send_header("Content-Type", "text/event-stream")
     handler.end_headers()
 
-    msg_id = f"msg_p42_{int(time.time()*1000)}"
+    msg_id = f"msg_lime_{int(time.time()*1000)}"
     handler.wfile.write(sse_event("message_start", {
         "type": "message_start",
         "message": {"id": msg_id, "type": "message", "role": "assistant",
@@ -259,7 +259,7 @@ def stream_upstream(handler, body, model):
             handler.wfile.write(sse_event("content_block_delta", {
                 "type": "content_block_delta", "index": block_index,
                 "delta": {"type": "signature_delta",
-                          "signature": "EqQBCkgIARABGAIiQg==..p42"}}))
+                          "signature": "EqQBCkgIARABGAIiQg==..lime"}}))
             handler.wfile.write(sse_event("content_block_stop", {
                 "type": "content_block_stop", "index": block_index}))
             block_index += 1
@@ -385,7 +385,7 @@ def nonstream_upstream(body, model):
     fr = (data.get("choices") or [{}])[0].get("finish_reason", "stop")
     usage = data.get("usage", {})
     return {
-        "id": f"msg_p42_{int(time.time()*1000)}",
+        "id": f"msg_lime_{int(time.time()*1000)}",
         "type": "message",
         "role": "assistant",
         "model": model,
@@ -469,5 +469,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PROXY_PORT", "8043"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    sys.stderr.write(f"project42 proxy listening on :{port}\n")
+    sys.stderr.write(f"anytimelime proxy listening on :{port}\n")
     server.serve_forever()

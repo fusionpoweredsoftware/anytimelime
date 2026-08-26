@@ -1,9 +1,9 @@
 services:
-  project42:
+  anytimelime-server:
     build:
       context: ..
-      dockerfile: project42/Dockerfile
-    container_name: project42
+      dockerfile: server/Dockerfile
+    container_name: anytimelime-server
     restart: unless-stopped
     environment:
       # Never commit the real key; use an .env file or shell env.
