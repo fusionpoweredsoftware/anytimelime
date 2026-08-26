@@ -25,15 +25,10 @@ LOG="$SCRIPT_DIR/synthesize.log"
 CONFIG_IN="${OR_PROBE_CONFIG:-$SCRIPT_DIR/openrouter.config.json}"
 SYNTH_MODEL="${SYNTH_MODEL:-openrouter/free}"
 
-KEY="${OPENROUTER_API_KEY:-}"
-if [ -z "$KEY" ] && [ -f "$CONFIG_IN" ]; then
-  KEY="$(jq -r '.ANTHROPIC_AUTH_TOKEN // empty' "$CONFIG_IN" 2>/dev/null || true)"
-fi
-if [ -z "$KEY" ] || [ "$KEY" = "null" ]; then
-  echo "synthesize: no OpenRouter key — set OPENROUTER_API_KEY or put" >&2
-  echo "            ANTHROPIC_AUTH_TOKEN in $CONFIG_IN" >&2
-  exit 1
-fi
+# Key resolution: env → config file → ask on the terminal and save
+# (or-key.sh exits 1 under cron with instructions if only the placeholder
+# is present — it never hangs waiting for input).
+KEY="$("$SCRIPT_DIR/or-key.sh")" || exit 1
 
 exec >> "$LOG" 2>&1
 echo "=== synthesize run — $(date '+%Y-%m-%d %H:%M:%S') ==="
