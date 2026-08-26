@@ -46,7 +46,7 @@ case "${ANTHROPIC_AUTH_TOKEN:-}" in
     ;;
 esac
 case "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" in
-  *"YOUR_OPENROUTER_MODEL_HERE"*)
+  ""|*YOUR*MODEL*)
     echo "or: ANTHROPIC_DEFAULT_SONNET_MODEL is still the placeholder." >&2
     echo "     Set OpenRouter model IDs (e.g. anthropic/claude-sonnet-4.5) in $CONFIG." >&2
     exit 1

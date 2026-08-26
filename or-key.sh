@@ -35,9 +35,14 @@ fi
 # 2. config file
 TOK=""
 if [ ! -f "$CONFIG" ]; then
-  # Seed the placeholder so the file always exists and the state is visible.
+  # Seed from the committed openrouter.config.json.example so the file
+  # starts with its full documented shape; minimal stub as fallback.
   umask 077
-  printf '{\n  "ANTHROPIC_AUTH_TOKEN": "%s"\n}\n' "$PLACEHOLDER" > "$CONFIG"
+  if [ -f "$SCRIPT_DIR/openrouter.config.json.example" ]; then
+    cp "$SCRIPT_DIR/openrouter.config.json.example" "$CONFIG"
+  else
+    printf '{\n  "ANTHROPIC_AUTH_TOKEN": "%s"\n}\n' "$PLACEHOLDER" > "$CONFIG"
+  fi
 elif [ -s "$CONFIG" ]; then
   TOK="$(jq -r '.ANTHROPIC_AUTH_TOKEN // empty' "$CONFIG" 2>/dev/null || true)"
 fi
