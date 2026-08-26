@@ -73,7 +73,16 @@ if ! echo "$ASSIGNMENT" | jq -e '.opus and .sonnet and .haiku' >/dev/null 2>&1 \
   echo "synthesize: model output invalid or off-list; falling back to heuristic."
   P=()
   while IFS= read -r _l; do [ -n "$_l" ] && P+=("$_l"); done <<< "$PASSING"
-  ASSIGNMENT=$(jq -n --arg o "${P[0]}" --arg s "${P[0]}" --arg h "${P[${#P[@]}-1]}" \
+  # Distinct tiers where the roster allows it. Sonnet used to duplicate opus
+  # unconditionally, which silently dropped a working model from the config.
+  H_O="${P[0]}"
+  H_S="${P[1]:-${P[0]}}"
+  H_H=""
+  for _m in "${P[@]}"; do
+    [ "$_m" != "$H_O" ] && [ "$_m" != "$H_S" ] && H_H="$_m"
+  done
+  [ -z "$H_H" ] && H_H="${P[${#P[@]}-1]}"
+  ASSIGNMENT=$(jq -n --arg o "$H_O" --arg s "$H_S" --arg h "$H_H" \
     '{opus: $o, sonnet: $s, haiku: $h}')
 fi
 
