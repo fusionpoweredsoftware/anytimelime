@@ -101,6 +101,10 @@ if [ "$FLOOR_ONLY" = 0 ]; then
   PROMPT='Search the web for currently free AI chat model endpoints that speak the OpenAI-compatible /v1/chat/completions API, available today. Include both keyless free tiers AND free-tier-with-key vendors (Groq, Together, NVIDIA NIM, Cerebras, Cloudflare Workers AI, Hugging Face inference, SambaNova, etc.). Respond with ONLY a JSON array — no prose, no markdown fences. Each element is one probeable model: {"id":"<model id to send in the model field>","vendor":"<name>","base_url":"<OpenAI-compatible root, e.g. https://api.groq.com/openai/v1>","needs_key":<true|false>,"key_env":"<env var name for the key, or null>"}. Use only real, current model ids you verified by search; do not invent endpoints.'
   REQ=$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
     '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}')
+  # This call is the slow one — a live web sweep through the gateway. Say what
+  # we're waiting on and how long it can take, so silence never looks like a hang.
+  echo "research: querying $MODEL via $BASE_URL (web sweep — up to 180s, silence is normal)…" >&2
+  _t0=$(python3 -c 'import time; print(time.time())')
   if [ -n "$KEY" ]; then
     RAW="$(printf '%s' "$REQ" | curl -s -m 180 "$BASE_URL/v1/chat/completions" \
       -H "Authorization: Bearer $KEY" -H "content-type: application/json" -d @- 2>/dev/null || true)"
@@ -108,6 +112,7 @@ if [ "$FLOOR_ONLY" = 0 ]; then
     RAW="$(printf '%s' "$REQ" | curl -s -m 180 "$BASE_URL/v1/chat/completions" \
       -H "content-type: application/json" -d @- 2>/dev/null || true)"
   fi
+  echo "research: model call returned in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
   CONTENT="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
   # The model may wrap JSON in fences or pad it with prose; pull the outermost
   # JSON array out. python3 is already a dependency (blog-gen's CANDIDATES rewrite).

@@ -161,9 +161,10 @@ echo
 # A probe asks the model to CALL a tool. Text-only replies are recorded as
 # WEAK, not PASS: Claude Code needs tool calls, and a model that can't make
 # one is not a working endpoint no matter how eloquent it is.
-probe_one() { # probe_one <id> <base_url> <key> <slot>
-  local model="$1" base="$2" key="$3" slot="$4"
+probe_one() { # probe_one <id> <base_url> <key> <slot> <vendor>
+  local model="$1" base="$2" key="$3" slot="$4" vendor="$5"
   local url start duration resp verdict
+  printf '  → probing %s [%s]\n' "$model" "$vendor" >&2
   # Normalize base_url -> .../chat/completions
   base="${base%/}"
   case "$base" in
@@ -210,6 +211,7 @@ probe_one() { # probe_one <id> <base_url> <key> <slot>
     elif ((.choices[0].message.content // "" | length) > 0) then "WEAK (text, no tool)"
     else "FAIL: empty response"
     end' 2>/dev/null || echo "FAIL: unparseable")
+  printf '  ← %s: %s (%s)\n' "$model" "$verdict" "$duration" >&2
 
   {
     printf '%s  %s\n' "$duration" "$model"
@@ -232,12 +234,13 @@ while IFS=$'\t' read -r id vendor base needs keyenv src; do
     if [ -z "$k" ]; then
       printf '%s\t%s\tFAIL: needs key\n' "—" "$id" >> "$NEEDS_KEY_TSV"
       { printf '%s  %s\n' "—" "$id"; printf '    FAIL: needs key (%s)\n' "$vendor"; } > "$WORK_DIR/out.$sl"
+      printf '  − %s: FAIL: needs key (%s)\n' "$id" "$vendor" >&2
       continue
     fi
   else
     k=""
   fi
-  probe_one "$id" "$base" "$k" "$sl" &
+  probe_one "$id" "$base" "$k" "$sl" "$vendor" &
   if [ $((slot % JOBS)) -eq 0 ]; then wait; fi
 done < "$CAND_TSV"
 wait
