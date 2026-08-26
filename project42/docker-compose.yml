@@ -1,0 +1,17 @@
+services:
+  project42:
+    build:
+      context: ..
+      dockerfile: project42/Dockerfile
+    container_name: project42
+    restart: unless-stopped
+    environment:
+      # Never commit the real key; use an .env file or shell env.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      SYNTH_INTERVAL: "86400"   # seconds between scans (86400 = daily)
+      PORT: "8042"
+    ports:
+      - "8042:8042"   # keyless config/models over HTTP
+      - "8043:8043"   # Anthropic-compatible proxy (/v1/messages)
+    volumes:
+      - ./data:/app/public
