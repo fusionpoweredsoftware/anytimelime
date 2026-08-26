@@ -41,17 +41,6 @@ LIMIT="${FREE_SCAN_LIMIT:-24}"
 JOBS="${FREE_SCAN_JOBS:-6}"
 PROBE_TIMEOUT="${FREE_SCAN_TIMEOUT:-60}"
 
-# Key: env var wins (cron/CI/containers), then the gitignored config file.
-KEY="${OPENROUTER_API_KEY:-}"
-if [ -z "$KEY" ] && [ -f "$CONFIG_IN" ]; then
-  KEY="$(jq -r '.ANTHROPIC_AUTH_TOKEN // empty' "$CONFIG_IN" 2>/dev/null || true)"
-fi
-if [ -z "$KEY" ] || [ "$KEY" = "null" ]; then
-  echo "free-scan: no OpenRouter key — set OPENROUTER_API_KEY or put" >&2
-  echo "           ANTHROPIC_AUTH_TOKEN in $CONFIG_IN" >&2
-  exit 1
-fi
-
 CATALOG_URL="https://openrouter.ai/api/v1/models"
 
 # Last-resort candidates, used only if the catalog fetch fails outright.
@@ -68,11 +57,25 @@ FALLBACK_CANDIDATES=(
 
 echo "=== OpenRouter free model scan — $(date '+%Y-%m-%d %H:%M') ==="
 
+# The catalog is public, so a catalog peek needs no key. This check used to sit
+# above, which meant --list-only demanded a key it never used.
 if [ "${1:-}" = "--list-only" ]; then
   curl -s -m 20 "$CATALOG_URL" \
     | jq -r '.data[] | select(.pricing.prompt == "0" and .pricing.completion == "0")
              | "\(.id)  ctx=\(.context_length)"'
   exit 0
+fi
+
+# Probing does need a key: env var wins (cron/CI/containers), then the
+# gitignored config file.
+KEY="${OPENROUTER_API_KEY:-}"
+if [ -z "$KEY" ] && [ -f "$CONFIG_IN" ]; then
+  KEY="$(jq -r '.ANTHROPIC_AUTH_TOKEN // empty' "$CONFIG_IN" 2>/dev/null || true)"
+fi
+if [ -z "$KEY" ] || [ "$KEY" = "null" ]; then
+  echo "free-scan: no OpenRouter key — set OPENROUTER_API_KEY or put" >&2
+  echo "           ANTHROPIC_AUTH_TOKEN in $CONFIG_IN" >&2
+  exit 1
 fi
 
 # --- 1. Discover ------------------------------------------------------------
