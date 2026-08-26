@@ -1,0 +1,14 @@
+# Live API keys — never commit
+config.json
+openrouter.config.json
+openrouter-free.config.json
+tokenra.config.json
+# Local state / logs / scratch
+synthesize.log
+.lime-cursor
+rotation.weights.json
+.blog-probe.*
+.probe-results.txt
+public/models.json
+project42/data/
+.DS_Store
