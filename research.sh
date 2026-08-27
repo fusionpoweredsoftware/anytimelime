@@ -157,7 +157,7 @@ PYEOF
   FREE_MODELS="${RESEARCH_FREE_MODELS:-openrouter/free minimax/minimax-m3:free}"
   if [ -n "$OR_KEY" ]; then
     for fm in $FREE_MODELS; do
-      echo "research: trying FREE $fm (openrouter)…" >&2
+      echo "research: trying FREE $fm (openrouter) — up to 120s, no news until it answers…" >&2
       _t0=$(python3 -c 'import time; print(time.time())')
       RAW="$(jq -n --arg m "$fm" --arg p "$PROMPT" \
         '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}' \
