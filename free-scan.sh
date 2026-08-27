@@ -105,20 +105,20 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 # --- 1. Discover ------------------------------------------------------------
-# Build a candidate table: id \t vendor \t base_url \t needs_key \t key_env \t source
+# Build a candidate table: id \t vendor \t base_url \t needs_key \t key_env \t source \t docs
 CAND_TSV="$WORK_DIR/candidates.tsv"
 : > "$CAND_TSV"
 
-add_cand() { # add_cand <id> <vendor> <base_url> <needs_key> <key_env> <source>
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >> "$CAND_TSV"
+add_cand() { # add_cand <id> <vendor> <base_url> <needs_key> <key_env> <source> <docs>
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "${7:-}" >> "$CAND_TSV"
 }
 
 if [ -f "$CANDIDATES_FILE" ] && jq -e 'type == "array" and length > 0' "$CANDIDATES_FILE" >/dev/null 2>&1; then
   # Multi-vendor candidates from research.sh. needs_key may be bool or absent;
   # key_env may be null.
-  while IFS=$'\t' read -r id vendor base needs keyenv src; do
-    [ -n "$id" ] && add_cand "$id" "$vendor" "$base" "$needs" "$keyenv" "$src"
-  done < <(jq -r '.[] | [.id, .vendor, .base_url, (.needs_key|tostring), (.key_env|tostring), (.source//"catalog")] | @tsv' "$CANDIDATES_FILE")
+  while IFS=$'\t' read -r id vendor base needs keyenv src docs; do
+    [ -n "$id" ] && add_cand "$id" "$vendor" "$base" "$needs" "$keyenv" "$src" "${docs:-}"
+  done < <(jq -r '.[] | [.id, .vendor, .base_url, (.needs_key|tostring), (.key_env|tostring), (.source//"catalog"), (.docs // "")] | @tsv' "$CANDIDATES_FILE")
   echo "Discovered $(wc -l < "$CAND_TSV" | tr -d ' ') candidates from $CANDIDATES_FILE."
 else
   # Fallback: the original OpenRouter-catalog discovery path. Synthesize
@@ -327,7 +327,7 @@ probe_one() { # probe_one <id> <base_url> <key> <slot> <vendor>
 slot=0
 NEEDS_KEY_TSV="$WORK_DIR/needskey.tsv"
 : > "$NEEDS_KEY_TSV"
-while IFS=$'\t' read -r id vendor base needs keyenv src; do
+while IFS=$'\t' read -r id vendor base needs keyenv src docs; do
   [ -z "$id" ] && continue
   sl="$(printf '%04d' "$slot")"
   slot=$((slot + 1))
@@ -402,7 +402,8 @@ for line in open(sys.argv[1]):
         cands[p[0]] = {"id":p[0],"vendor":p[1],"base_url":p[2],
                        "needs_key":p[3]=="true",
                        "key_env":None if p[4]=="null" else p[4],
-                       "source":p[5]}
+                       "source":p[5],
+                       "docs":(p[6] if len(p)>6 and p[6] else None)}
         order.append(p[0])
 for line in open(sys.argv[2]):
     p = line.rstrip("\n").split("\t")

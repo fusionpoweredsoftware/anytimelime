@@ -15,6 +15,7 @@
 # base_url  OpenAI-compatible root (e.g. https://api.groq.com/openai/v1)
 # needs_key false = probe with no auth; true = probe needs the vendor's key
 # key_env   env var name for that key (never the value), or null
+# docs      URL of the endpoint's documentation, or null (community members)
 # source    "catalog" (deterministic fetch) | "research" (model found it)
 #
 # Env:
@@ -119,7 +120,7 @@ echo "research: deterministic floor: $(jq 'length' "$floor") candidates"
 # still ships.
 research="$WORK/research.json"; echo '[]' > "$research"
 if [ "$FLOOR_ONLY" = 0 ]; then
-  PROMPT='Search the web for currently free AI chat model endpoints that speak the OpenAI-compatible /v1/chat/completions API, available today. Include both keyless free tiers AND free-tier-with-key vendors (Groq, Together, NVIDIA NIM, Cerebras, Cloudflare Workers AI, Hugging Face inference, SambaNova, etc.). ALSO look for anytimelime community-network members: pages whose source contains the anytimelime tag and access details labeled AnytimeLime Endpoint (<!-- anytimelime --> followed by a list where each entry reads AnytimeLime Endpoint and gives a model id and base URL) — include every endpoint they list, with the site as the vendor. Respond with ONLY a JSON array — no prose, no markdown fences. Each element is one probeable model: {"id":"<model id to send in the model field>","vendor":"<name>","base_url":"<OpenAI-compatible root, e.g. https://api.groq.com/openai/v1>","needs_key":<true|false>,"key_env":"<env var name for the key, or null>"}. Use only real, current model ids you verified by search; do not invent endpoints.'
+  PROMPT='Search the web for currently free AI chat model endpoints that speak the OpenAI-compatible /v1/chat/completions API, available today. Include both keyless free tiers AND free-tier-with-key vendors (Groq, Together, NVIDIA NIM, Cerebras, Cloudflare Workers AI, Hugging Face inference, SambaNova, etc.). ALSO look for anytimelime community-network members: pages whose source contains the anytimelime tag and access details labeled AnytimeLime Endpoint (<!-- anytimelime --> followed by a list where each entry reads AnytimeLime Endpoint and gives a model id and base URL) — include every endpoint they list, with the site as the vendor. Respond with ONLY a JSON array — no prose, no markdown fences. Each element is one probeable model: {"id":"<model id to send in the model field>","vendor":"<name>","base_url":"<OpenAI-compatible root, e.g. https://api.groq.com/openai/v1>","needs_key":<true|false>,"key_env":"<env var name for the key, or null>","docs":"<URL of the endpoint documentation page, or null>"}. Use only real, current model ids you verified by search; do not invent endpoints.'
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
   # or pad it with prose; pull the outermost JSON array out and normalize to
@@ -148,6 +149,7 @@ for o in arr:
     if isinstance(o.get("id"), str) and o["id"]:
         ids.append(o["id"])
     base = o.get("base_url")
+    docs = o.get("docs") if isinstance(o.get("docs"), str) and o.get("docs","").startswith("http") else None
     for i in ids:
         if not base: continue
         out.append({
@@ -156,6 +158,7 @@ for o in arr:
             "base_url": base,
             "needs_key": bool(o.get("needs_key", True)),
             "key_env": o.get("key_env") if isinstance(o.get("key_env"), str) else None,
+            "docs": docs,
             "source": "research",
         })
 print(json.dumps(out))
