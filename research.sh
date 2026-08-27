@@ -51,13 +51,13 @@ for _a in "$@"; do
        fi ;;
   esac
 done
-# --force-model <model>: the paid sweep runs with this ONE named model instead
-# of the gateway default (implies --force). It changes who researches — the
-# free route (asking the free pool for endpoint tips) still runs as usual.
+# --force-model <model>: this ONE named model IS the researcher (implies
+# --force). The free-pool conversation is skipped and the forced model runs
+# the web sweep itself through the paid gateway harness.
 if [ -n "$FORCE_MODEL" ]; then
   MODEL="$FORCE_MODEL"
   FORCE=1
-  echo "research: --force-model — paid sweep will use $MODEL; free route unaffected." >&2
+  echo "research: --force-model — $MODEL is the researcher; free pool skipped." >&2
 fi
 
 # Reuse window: if candidates.json was written less than RESEARCH_TTL seconds
@@ -360,7 +360,9 @@ PYEOF
     done
     return 1
   }
-  if start_free_stack; then
+  if [ -n "$FORCE_MODEL" ]; then
+    : # forced researcher — the free stack isn't used, don't stand it up
+  elif start_free_stack; then
     echo "research: free pool rides the harness — web search ON (gateway :$FREE_GATEWAY_PORT)" >&2
     emit status "free models have web search via the razzle-dazzle harness" ""
   else
@@ -371,7 +373,9 @@ PYEOF
   else
     FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=180
   fi
-  if [ -n "$OR_KEY" ]; then
+  if [ -n "$FORCE_MODEL" ]; then
+    echo "research: --force-model — $FORCE_MODEL is the researcher; free pool skipped by request." >&2
+  elif [ -n "$OR_KEY" ]; then
     # ONE conversation at a time, one question at a time inside it. Turn cap
     # 4: open with the community sweep, then follow-ups built from what the
     # previous answer actually said. Generous caps — the run may take an hour.
@@ -480,8 +484,13 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
     else
       echo "research: continuing anyway — the call will fail fast if the port is dead." >&2
     fi
-    echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
-    emit status "free routes failed — falling back to PAID $MODEL (web sweep, cap 180s)" "$MODEL"
+    if [ -n "$FORCE_MODEL" ]; then
+      echo "research: forced researcher — PAID $MODEL runs the web sweep directly…" >&2
+      emit status "$MODEL is the forced researcher — running the web sweep" "$MODEL"
+    else
+      echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
+      emit status "free routes failed — falling back to PAID $MODEL (web sweep, cap 180s)" "$MODEL"
+    fi
     _t0=$(python3 -c 'import time; print(time.time())')
     # Narration eats tokens — the JSON array comes LAST, so the caps must
     # leave room for a full search story plus the final array. No rush: the
