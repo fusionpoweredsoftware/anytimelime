@@ -4,7 +4,7 @@
 #
 # The purpose of anytimelime is to probe the INTERNET for free AI, not just
 # OpenRouter. This step finds candidates; the probe (free-scan.sh) verifies
-# them. The cloud model with web search (glm-5.1:cloud via the razzle-dazzle
+# them. The cloud model with web search (glm-5.3 via the razzle-dazzle
 # gateway) powers the research, and a deterministic keyless-catalog fetch is the
 # reproducible floor that catches what the model misses — and ships when the
 # model is unreachable. AI finds candidates; the probe decides what's real.
@@ -20,7 +20,7 @@
 #
 # Env:
 #   RESEARCH_BASE_URL  default http://localhost:8000  (razzle-dazzle gateway)
-#   RESEARCH_MODEL     default glm-5.1:cloud
+#   RESEARCH_MODEL     default glm-5.3
 #   RESEARCH_KEY       default "" (gateway may not require auth)
 #   CANDIDATES_FILE    default $SCRIPT_DIR/candidates.json
 #
@@ -32,7 +32,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URL="${RESEARCH_BASE_URL:-http://localhost:8000}"
-MODEL="${RESEARCH_MODEL:-glm-5.1:cloud}"
+MODEL="${RESEARCH_MODEL:-glm-5.3}"
 KEY="${RESEARCH_KEY:-}"
 OUT="${CANDIDATES_FILE:-$SCRIPT_DIR/candidates.json}"
 FLOOR_ONLY=0
