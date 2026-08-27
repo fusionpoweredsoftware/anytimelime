@@ -61,7 +61,11 @@ if [ "$FORCE" = 0 ] && [ "$FLOOR_ONLY" = 0 ] && [ -f "$OUT" ] \
 fi
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"; [ -n "${DASH_PID:-}" ] && kill "$DASH_PID" 2>/dev/null; true' EXIT
+trap 'rm -rf "$WORK"
+  [ -n "${DASH_PID:-}" ] && kill "$DASH_PID" 2>/dev/null
+  [ -n "${FREE_GATEWAY_PID:-}" ] && kill "$FREE_GATEWAY_PID" 2>/dev/null
+  [ -n "${ORPROXY_PID:-}" ] && kill "$ORPROXY_PID" 2>/dev/null
+  true' EXIT
 
 atomic_mv() { local dest="$1" tmp="${1}.tmp.$$"; cat > "$tmp" && mv -f "$tmp" "$dest"; }
 
@@ -252,6 +256,33 @@ PYEOF
     cat "$cf" 2>/dev/null || true
   }
 
+  # followup_rounds <model> <url> <bearer> <timeout> <prompt-prefix> — a model
+  # that contributed anything is asked whether there is MORE it did not list
+  # yet, until it answers [] (done) or 3 extra rounds pass. Models hold back
+  # on the first ask; the nudge finds the tail. Echoes the extra count.
+  followup_rounds() { # followup_rounds <model> <url> <bearer> <timeout> <prefix>
+    local m="$1" url="$2" bearer="$3" tmo="$4" prefix="$5" round=1 extra_n=0
+    while [ "$round" -le 3 ]; do
+      local sofar tmpf N C
+      sofar="$(jq -r '[.[].id] | .[-30:] | join(", ")' "$research")"
+      echo "research: $m — follow-up round $round (anything not listed yet?)…" >&2
+      emit status "$m — follow-up round $round: any endpoints not listed yet?" "$m"
+      C="$(jq -n --arg m "$m" --arg p "$prefix So far these are already found: $sofar. Are there more free OpenAI-compatible model endpoints NOT in that list? $FMT" \
+        '{model: $m, max_tokens: 1200, stream: true, messages: [{role:"user", content: $p}]}' \
+        | stream_curl "$m" "$tmo" "$url" "$bearer")"
+      [ -z "$C" ] && break
+      tmpf="$WORK/fu.$$.json"
+      N="$(extract_candidates "$C" "$tmpf")"
+      if [ "$N" -gt 0 ] 2>/dev/null; then
+        jq -s '.[0] + .[1]' "$research" "$tmpf" > "$research.tmp" && mv "$research.tmp" "$research"
+        extra_n=$((extra_n + N)); round=$((round + 1))
+      else
+        break
+      fi
+    done
+    echo "$extra_n"
+  }
+
   # Route 1: FREE models via OpenRouter — as many as we have. The pool is
   # normally today's probe passers (blog-gen injects them via
   # RESEARCH_FREE_MODELS); until a first roster exists, the defaults run.
@@ -265,6 +296,53 @@ PYEOF
   case "$OR_KEY" in ""|null|*PLACEHOLDER*|*YOUR*KEY*) OR_KEY="" ;; esac
   FREE_MODELS="${RESEARCH_FREE_MODELS:-openrouter/free minimax/minimax-m3:free}"
   MODEL_USED=""
+
+  # Free models THROUGH the harness. The claude harness (razzle-dazzle) gives
+  # any tool-call-capable model real web search — and the passers are
+  # tool-capable by definition. We stand up a translating proxy (or-proxy)
+  # plus a second gateway born pointed at it, and the free pool browses.
+  # If the stack cannot start, free models still answer from memory via
+  # direct OpenRouter calls — free either way.
+  FREE_GATEWAY_PORT="${FREE_GATEWAY_PORT:-8022}"
+  ORPROXY_PORT="${ORPROXY_PORT:-8099}"
+  GATEWAY_DIR="${RAZZLE_GATEWAY_DIR:-$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/claude-code-api}"
+  UVICORN_BIN="${UVICORN_BIN:-$(command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
+  FREE_ENDPOINT=""
+  start_free_stack() {
+    [ -d "$GATEWAY_DIR" ] || { echo "research: no gateway dir at $GATEWAY_DIR" >&2; return 1; }
+    if ! lsof -iTCP:"$ORPROXY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      OR_KEY="$OR_KEY" nohup python3 "$SCRIPT_DIR/server/or-proxy.py" "$ORPROXY_PORT" >/dev/null 2>&1 &
+      ORPROXY_PID=$!
+    fi
+    mkdir -p "$SCRIPT_DIR/.free-gateway"
+    printf '%s\n' $FREE_MODELS | jq -R -s 'split("\n") | map(select(length>0)) | {default_model:.[0], aliases:{}, models:[.[]|{id:.,name:.,max_tokens:65536,supports_streaming:true,supports_tools:true}]}' > "$SCRIPT_DIR/.free-gateway/models.json"
+    if ! lsof -iTCP:"$FREE_GATEWAY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      ( cd "$GATEWAY_DIR" && exec env -u ANTHROPIC_API_KEY -u ZAI_API_KEY -u ZAI_CODE_MODEL -u ZAI_ANTHROPIC_BASE_URL -u HYBRID_WEIGHT \
+          ANTHROPIC_BASE_URL="http://127.0.0.1:$ORPROXY_PORT" ANTHROPIC_AUTH_TOKEN=local-free-stack \
+          CLAUDE_CODE_API_MODELS_PATH="$SCRIPT_DIR/.free-gateway/models.json" \
+          "$UVICORN_BIN" claude_code_api.main:app --host 127.0.0.1 --port "$FREE_GATEWAY_PORT" ) >/dev/null 2>&1 &
+      FREE_GATEWAY_PID=$!
+    fi
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      if curl -s -m 2 "http://127.0.0.1:$FREE_GATEWAY_PORT/health" 2>/dev/null | grep -q healthy; then
+        FREE_ENDPOINT="http://127.0.0.1:$FREE_GATEWAY_PORT"; return 0
+      fi
+      sleep 1
+    done
+    return 1
+  }
+  if start_free_stack; then
+    echo "research: free pool rides the harness — web search ON (gateway :$FREE_GATEWAY_PORT)" >&2
+    emit status "free models have web search via the razzle-dazzle harness" ""
+  else
+    echo "research: free stack unavailable — free models answer from memory (no browsing)." >&2
+  fi
+  if [ -n "$FREE_ENDPOINT" ]; then
+    FQ_URL="$FREE_ENDPOINT/v1/chat/completions"; FQ_KEY=""; FQ_TMO=180
+  else
+    FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=90
+  fi
   if [ -n "$OR_KEY" ]; then
     echo "research: free pool — $(printf '%s' "$FREE_MODELS" | wc -w | tr -d ' ') model(s), ${#FREE_QUESTIONS[@]} small questions each" >&2
     emit status "free pool: $(printf '%s' "$FREE_MODELS" | wc -w | tr -d ' ') models × ${#FREE_QUESTIONS[@]} questions"
@@ -278,7 +356,7 @@ PYEOF
         emit status "$fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}: $(printf '%s' "$q" | head -c 60)…" "$fm"
         C="$(jq -n --arg m "$fm" --arg p "$q" \
           '{model: $m, max_tokens: 1200, stream: true, messages: [{role:"user", content: $p}]}' \
-          | stream_curl "$fm" 90 https://openrouter.ai/api/v1/chat/completions "$OR_KEY")"
+          | stream_curl "$fm" "$FQ_TMO" "$FQ_URL" "$FQ_KEY")"
         if [ -n "$C" ]; then
           tmpf="$WORK/q.$$.json"
           N="$(extract_candidates "$C" "$tmpf")"
@@ -291,6 +369,13 @@ PYEOF
         fi
       done
       echo "research: $fm done in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')") — contributed $fm_n candidate(s)" >&2
+      if [ "$fm_n" -gt 0 ]; then
+        _extra="$(followup_rounds "$fm" "$FQ_URL" "$FQ_KEY" "$FQ_TMO" "You helped find free AI model endpoints.")"
+        if [ "$_extra" -gt 0 ] 2>/dev/null; then
+          fm_n=$((fm_n + _extra)); TOTAL_FREE=$((TOTAL_FREE + _extra))
+          echo "research: $fm follow-ups added $_extra more" >&2
+        fi
+      fi
       emit status "$fm finished — contributed $fm_n candidates (free harvest so far: $TOTAL_FREE)" "$fm"
       [ "$fm_n" -gt 0 ] && MODEL_USED="${MODEL_USED:+$MODEL_USED, }$fm (free)"
     done
