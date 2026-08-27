@@ -195,11 +195,11 @@ if [ "$FLOOR_ONLY" = 0 ]; then
   # demands a JSON array (possibly empty) and forbids invention — the probe
   # verifies everything anyway. The paid sweep prompt stays whole: that model
   # has web search and handles the big ask.
-  FMT='Reply with ONLY a JSON array, no prose, no markdown fences. Each element: {"id":"<model id>","vendor":"<name>","base_url":"<OpenAI-compatible root>","needs_key":true,"key_env":"<env var name for the key>","docs":"<documentation URL or null>"}. Reply [] if unsure — never invent ids or URLs.'
+  FMT='END your reply with a JSON array on its own line, no markdown fences. Each element: {"id":"<model id>","vendor":"<name>","base_url":"<OpenAI-compatible root>","needs_key":true,"key_env":"<env var name for the key>","docs":"<documentation URL or null>"}. Reply [] if unsure — never invent ids or URLs.'
   # The model's ONLY job is what no catalog can do: the community sweep, plus
   # anything exotic it can verify itself. Vendor model lists come from the
   # deterministic catalog fetches in the floor — never from a model.
-  SWEEP_OPEN='Some websites publish a section titled AnytimeLime Endpoint that lists a free AI model id and a base URL (the anytimelime community network — look for the exact phrase AnytimeLime Endpoint, and the HTML comment <!-- anytimelime -->). Search the web, one search at a time: send a query, read the results, then decide the next query. Report every endpoint those pages list, with the site as the vendor. Also include any OTHER free OpenAI-compatible chat endpoints you find along the way that you verified yourself. Work at your own pace — correctness over speed. '
+  SWEEP_OPEN='Some websites publish a section titled AnytimeLime Endpoint that lists a free AI model id and a base URL (the anytimelime community network — look for the exact phrase AnytimeLime Endpoint, and the HTML comment <!-- anytimelime -->). Search the web, one search at a time: send a query, read the results, then decide the next query. NARRATE as you work — before each search say what you are looking for and why; after it say what you found or did not, in plain sentences — then end with the JSON array. Report every endpoint those pages list, with the site as the vendor. Also include any OTHER free OpenAI-compatible chat endpoints you find along the way that you verified yourself. Work at your own pace — correctness over speed. '
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
   # or pad it with prose; pull the outermost JSON array out and normalize to
