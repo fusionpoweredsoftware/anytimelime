@@ -149,6 +149,16 @@ if [ "$DISCOVERED" -eq 0 ]; then
   echo "free-scan: no candidates found anywhere — nothing to probe." >&2
   exit 1
 fi
+# Fair-share before the LIMIT cut: candidates arrive grouped by vendor (the
+# floor fetches one catalog at a time), so a naive head -N gives the whole
+# probe budget to whichever vendor sorts first. Round-robin by vendor instead
+# — every vendor alternates, and a 60-model catalog can't starve the rest.
+# (POSIX awk: 2-D via SUBSEP, no arrays-of-arrays — macOS awk lacks them.)
+awk -F'\t' -v d=99999 \
+  '{ if (!seen[$2]++) order[++nv]=$2; n[$2]++; rows[$2, n[$2]]=$0 }
+   END { for (i=1;i<=d;i++) for (v=1;v<=nv;v++) { k=order[v] SUBSEP i
+           if (k in rows) print rows[k] } }' \
+  "$CAND_TSV" > "$CAND_TSV.tmp" && mv "$CAND_TSV.tmp" "$CAND_TSV"
 if [ "$LIMIT" -gt 0 ] && [ "$DISCOVERED" -gt "$LIMIT" ]; then
   head -n "$LIMIT" "$CAND_TSV" > "$CAND_TSV.tmp" && mv "$CAND_TSV.tmp" "$CAND_TSV"
   echo "Probing top $LIMIT of $DISCOVERED candidates."
