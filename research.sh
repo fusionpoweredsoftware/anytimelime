@@ -315,7 +315,7 @@ PYEOF
       ORPROXY_PID=$!
     fi
     mkdir -p "$SCRIPT_DIR/.free-gateway"
-    printf '%s\n' $FREE_MODELS | jq -R -s 'split("\n") | map(select(length>0)) | {default_model:.[0], aliases:{}, models:[.[]|{id:.,name:.,max_tokens:65536,supports_streaming:true,supports_tools:true}]}' > "$SCRIPT_DIR/.free-gateway/models.json"
+    printf '%s\n' $FREE_MODELS | jq -R -s 'split("\n") | map(select(length>0)) | {default_model:.[0], aliases:{}, models:[.[]|{id:.,name:.,description:("free passer, scored 3+ for agentic work"),max_tokens:65536,input_cost_per_1k:0,output_cost_per_1k:0,supports_streaming:true,supports_tools:true}]}' > "$SCRIPT_DIR/.free-gateway/models.json"
     if ! lsof -iTCP:"$FREE_GATEWAY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
       ( cd "$GATEWAY_DIR" && exec env -u ANTHROPIC_API_KEY -u ZAI_API_KEY -u ZAI_CODE_MODEL -u ZAI_ANTHROPIC_BASE_URL -u HYBRID_WEIGHT \
           ANTHROPIC_BASE_URL="http://127.0.0.1:$ORPROXY_PORT" ANTHROPIC_AUTH_TOKEN=local-free-stack \
