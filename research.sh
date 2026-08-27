@@ -61,7 +61,7 @@ if [ "$FORCE" = 0 ] && [ "$FLOOR_ONLY" = 0 ] && [ -f "$OUT" ] \
 fi
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK"; [ -n "${DASH_PID:-}" ] && kill "$DASH_PID" 2>/dev/null; true' EXIT
 
 atomic_mv() { local dest="$1" tmp="${1}.tmp.$$"; cat > "$tmp" && mv -f "$tmp" "$dest"; }
 
@@ -118,6 +118,31 @@ echo "research: deterministic floor: $(jq 'length' "$floor") candidates"
 # route fails. Failure is non-fatal — the floor still ships.
 research="$WORK/research.json"; echo '[]' > "$research"
 if [ "$FLOOR_ONLY" = 0 ]; then
+
+  # --- 2a. Live progress feed + local dashboard ------------------------------
+  # Every step — and every streamed token of the model's answer — is appended
+  # to .research-live/events.jsonl and served on a local port. Open the URL
+  # printed below to watch the model work in real time instead of staring at
+  # a ticker. The server serves ONLY the progress dir (never the repo, which
+  # holds gitignored key files) and dies with this script.
+  LIVE_DIR="$SCRIPT_DIR/.research-live"; mkdir -p "$LIVE_DIR"
+  : > "$LIVE_DIR/events.jsonl"
+  cp "$SCRIPT_DIR/dashboard.html" "$LIVE_DIR/index.html" 2>/dev/null || true
+  DASH_PORT="${RESEARCH_DASH_PORT:-8070}"
+  DASH_PID=""
+  if lsof -iTCP:"$DASH_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "research: live progress → http://127.0.0.1:$DASH_PORT/ (server already up)" >&2
+  else
+    ( cd "$LIVE_DIR" && exec python3 -m http.server "$DASH_PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+    DASH_PID=$!
+    echo "research: live progress → http://127.0.0.1:$DASH_PORT/" >&2
+  fi
+  emit() { # emit <kind> <text> [model-chip]
+    printf '{"t":"%s","kind":"%s","text":%s,"model":%s}\n' \
+      "$(date '+%H:%M:%S')" "$1" "$(printf '%s' "$2" | jq -Rs .)" \
+      "$(printf '%s' "${3:-}" | jq -Rs .)" >> "$LIVE_DIR/events.jsonl"
+  }
+  emit status "floor done — calling research models (free first, paid only as fallback)"
   PROMPT='Search the web for currently free AI chat model endpoints that speak the OpenAI-compatible /v1/chat/completions API, available today. Include both keyless free tiers AND free-tier-with-key vendors (Groq, Together, NVIDIA NIM, Cerebras, Cloudflare Workers AI, Hugging Face inference, SambaNova, etc.). ALSO look for anytimelime community-network members: pages whose source contains the anytimelime tag and access details labeled AnytimeLime Endpoint (<!-- anytimelime --> followed by a list where each entry reads AnytimeLime Endpoint and gives a model id and base URL) — include every endpoint they list, with the site as the vendor. Respond with ONLY a JSON array — no prose, no markdown fences. Each element is one probeable model: {"id":"<model id to send in the model field>","vendor":"<name>","base_url":"<OpenAI-compatible root, e.g. https://api.groq.com/openai/v1>","needs_key":<true|false>,"key_env":"<env var name for the key, or null>","docs":"<URL of the endpoint documentation page, or null>"}. Use only real, current model ids you verified by search; do not invent endpoints.'
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
@@ -164,25 +189,50 @@ PYEOF
     jq 'length' "$2" 2>/dev/null || echo 0
   }
 
-  # timed_curl <label> <timeout_s> <url> [auth_header] — curl in the
-  # background with a live ticker, so a slow model never looks like a hang.
-  # Raw body lands in $WORK/raw.$$, echoed on stdout.
-  timed_curl() { # timed_curl <label> <timeout_s> <url> [bearer]
-    local label="$1" tmo="$2" url="$3" bearer="${4:-}" rawf="$WORK/raw.$$" el=0
-    if [ -n "$bearer" ]; then
-      ( curl -s -m "$tmo" "$url" -H "Authorization: Bearer $bearer" \
-          -H "content-type: application/json" -d @- > "$rawf" 2>/dev/null || true ) &
-    else
-      ( curl -s -m "$tmo" "$url" -H "content-type: application/json" \
-          -d @- > "$rawf" 2>/dev/null || true ) &
-    fi
+  # stream_curl <label> <timeout_s> <url> [bearer] — POSTs stdin as the
+  # request with stream:true and parses the SSE live: every content delta is
+  # pushed to the dashboard as it arrives and appended to the assembled
+  # answer; raw SSE is kept in $WORK/raw.$$ for diagnostics. A heartbeat
+  # reports long silent stretches (thinking / web sweep). Echoes the assembled
+  # content on stdout — callers treat it exactly like the non-streamed
+  # .choices[0].message.content they used to get.
+  stream_curl() { # stream_curl <label> <timeout_s> <url> [bearer]
+    local label="$1" tmo="$2" url="$3" bearer="${4:-}"
+    local rawf="$WORK/raw.$$" cf="$WORK/content.$$"
+    : > "$cf"; : > "$rawf"
+    emit status "calling $label — streaming, cap ${tmo}s" "$label"
+    ( if [ -n "$bearer" ]; then
+        curl -sN -m "$tmo" "$url" -H "Authorization: Bearer $bearer" \
+          -H "content-type: application/json" -d @- 2>/dev/null || true
+      else
+        curl -sN -m "$tmo" "$url" -H "content-type: application/json" \
+          -d @- 2>/dev/null || true
+      fi | while IFS= read -r _l; do
+        printf '%s\n' "$_l" >> "$rawf"
+        case "$_l" in data:*)
+          _d="$(printf '%s' "$_l" | jq -r '.choices[0].delta.content // empty' 2>/dev/null || true)"
+          if [ -n "$_d" ]; then
+            printf '%s' "$_d" >> "$cf"
+            emit delta "$_d" "$label"
+            echo "research:   ▸ $label: ${_d}" | head -c 200 >&2
+          fi ;;
+        esac
+      done ) &
     local pid=$!
-    while kill -0 "$pid" 2>/dev/null; do
-      sleep 15; el=$((el + 15))
-      [ $el -ge "$tmo" ] || echo "research:   …still waiting on $label — ${el}s elapsed (cap ${tmo}s)" >&2
-    done
+    ( local _last=-1 _sz
+      while kill -0 "$pid" 2>/dev/null; do
+        sleep 20
+        _sz="$(wc -c < "$cf" | tr -d ' ')"
+        if [ "$_sz" = "$_last" ]; then
+          echo "research:   …$label quiet for 20s (thinking / web sweep)" >&2
+          emit status "$label — quiet for 20s (thinking / web sweep)" "$label"
+        fi
+        _last="$_sz"
+      done ) &
+    local hb=$!
     wait "$pid" 2>/dev/null || true
-    cat "$rawf" 2>/dev/null || true
+    kill "$hb" 2>/dev/null || true
+    cat "$cf" 2>/dev/null || true
   }
 
   # Route 1: FREE models via OpenRouter. A reply only counts if it parses to
@@ -198,22 +248,27 @@ PYEOF
   if [ -n "$OR_KEY" ]; then
     for fm in $FREE_MODELS; do
       echo "research: trying FREE $fm (openrouter) — cap 120s…" >&2
+      emit status "trying FREE $fm (openrouter) — cap 120s" "$fm"
       _t0=$(python3 -c 'import time; print(time.time())')
-      RAW="$(jq -n --arg m "$fm" --arg p "$PROMPT" \
-        '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}' \
-        | timed_curl "$fm" 120 https://openrouter.ai/api/v1/chat/completions "$OR_KEY")"
-      C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
+      C="$(jq -n --arg m "$fm" --arg p "$PROMPT" \
+        '{model: $m, max_tokens: 3000, stream: true, messages: [{role:"user", content: $p}]}' \
+        | stream_curl "$fm" 120 https://openrouter.ai/api/v1/chat/completions "$OR_KEY")"
       echo "research: $fm answered in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
       if [ -n "$C" ]; then
         N="$(extract_candidates "$C" "$research")"
         if [ "$N" -gt 0 ] 2>/dev/null; then
           MODEL_USED="$fm (free)"
           echo "research: $fm (free) returned $N candidates"
+          emit status "$fm (free) returned $N candidates — keeping them" "$fm"
           break
         fi
         echo "research: $fm replied but with no usable candidate list — next route." >&2
+        emit status "$fm replied but with no usable candidate list — next free model" "$fm"
       else
-        echo "research: $fm unusable — $(printf '%s' "$RAW" | jq -r '.error.message // "no content"' 2>/dev/null | head -c 70)" >&2
+        _err="$(sed -n 's/^data: //p' "$WORK/raw.$$" 2>/dev/null | jq -r '.error.message // empty' 2>/dev/null | head -c 70)"
+        [ -z "$_err" ] && _err="no content"
+        echo "research: $fm unusable — $_err" >&2
+        emit status "$fm unusable — $_err" "$fm"
       fi
       echo '[]' > "$research"
     done
@@ -224,29 +279,32 @@ PYEOF
   # Route 2: paid cloud via the gateway, ONLY when every free route failed.
   if [ -z "$MODEL_USED" ]; then
     echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
+    emit status "free routes failed — falling back to PAID $MODEL (web sweep, cap 180s)" "$MODEL"
     _t0=$(python3 -c 'import time; print(time.time())')
     REQ="$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
-      '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}')"
+      '{model: $m, max_tokens: 3000, stream: true, messages: [{role:"user", content: $p}]}')"
     if [ -n "$KEY" ]; then
-      RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
+      C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
     else
-      RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions")"
+      C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions")"
     fi
     echo "research: paid fallback returned in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
-    C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
     if [ -n "$C" ]; then
       N="$(extract_candidates "$C" "$research")"
       if [ "$N" -gt 0 ] 2>/dev/null; then
         MODEL_USED="$MODEL (paid fallback)"
         echo "research: $MODEL (paid fallback) returned $N candidates"
+        emit status "$MODEL (paid fallback) returned $N candidates — keeping them" "$MODEL"
       else
         echo "research: $MODEL replied but with no usable candidate list — relying on floor." >&2
+        emit status "$MODEL replied but with no usable candidate list — relying on floor" "$MODEL"
         echo '[]' > "$research"
       fi
     else
       echo '[]' > "$research"
-      echo "research: $MODEL returned no content — $(printf '%s' "$RAW" | jq -r '.error.message // "empty response"' 2>/dev/null | head -c 70)" >&2
+      echo "research: $MODEL returned no content — $(head -c 70 "$WORK/raw.$$" | tr -d '\n')" >&2
       echo "research: relying on the deterministic floor." >&2
+      emit status "$MODEL returned no content — relying on the deterministic floor" "$MODEL"
     fi
   fi
 fi
@@ -262,4 +320,5 @@ jq -n --slurpfile f "$floor" --slurpfile r "$research" '
 ' | atomic_mv "$OUT"
 
 echo "research: wrote $OUT — $(jq 'length' "$OUT") candidates across $(jq '[.[].vendor] | unique | length' "$OUT") vendors"
+[ "${FLOOR_ONLY:-0}" = 0 ] && emit done "done — $(jq 'length' "$OUT") candidates written to candidates.json" "" || true
 jq '[.[].vendor] | unique' "$OUT" 2>/dev/null || true

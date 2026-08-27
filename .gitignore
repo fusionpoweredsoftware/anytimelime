@@ -14,3 +14,5 @@ candidates.json
 public/models.json
 server/data/
 .DS_Store
+
+.research-live/
