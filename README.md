@@ -156,6 +156,11 @@ happened.
 - [ ] Latency trending — turn the roster from a list into a forecast
 - [ ] Credit ledger + inquiry minting
 - [ ] Advertiser station
+- [ ] Beyond-free tiers: ultracheap (paid but near-zero cost) and invite-only
+      (free behind an access request) models. The research sweep should find
+      them, and candidates.json + latest.json + the report page should carry
+      the tier info — but only render it where relevant; no empty placeholder
+      UI for records that don't have it.
 
 ---
 
