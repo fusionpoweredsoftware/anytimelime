@@ -19,7 +19,7 @@
 # source    "catalog" (deterministic fetch) | "research" (model found it)
 #
 # Env:
-#   RESEARCH_BASE_URL  default http://localhost:8000  (razzle-dazzle gateway)
+#   RESEARCH_BASE_URL  default http://localhost:8020  (razzle-dazzle gateway)
 #   RESEARCH_MODEL     default glm-5.2:cloud
 #   RESEARCH_KEY       default "" (gateway may not require auth)
 #   CANDIDATES_FILE    default $SCRIPT_DIR/candidates.json
@@ -31,7 +31,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_URL="${RESEARCH_BASE_URL:-http://localhost:8000}"
+BASE_URL="${RESEARCH_BASE_URL:-http://localhost:8020}"
 MODEL="${RESEARCH_MODEL:-glm-5.2:cloud}"
 KEY="${RESEARCH_KEY:-}"
 OUT="${CANDIDATES_FILE:-$SCRIPT_DIR/candidates.json}"
