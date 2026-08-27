@@ -4,7 +4,7 @@
 #
 # The purpose of anytimelime is to probe the INTERNET for free AI, not just
 # OpenRouter. This step finds candidates; the probe (free-scan.sh) verifies
-# them. A paid cloud model with web search (glm-5.2:cloud via the razzle-dazzle
+# them. The cloud model with web search (glm-5.1:cloud via the razzle-dazzle
 # gateway) powers the research, and a deterministic keyless-catalog fetch is the
 # reproducible floor that catches what the model misses — and ships when the
 # model is unreachable. AI finds candidates; the probe decides what's real.
@@ -19,7 +19,7 @@
 #
 # Env:
 #   RESEARCH_BASE_URL  default http://localhost:8000  (razzle-dazzle gateway)
-#   RESEARCH_MODEL     default glm-5.2:cloud
+#   RESEARCH_MODEL     default glm-5.1:cloud
 #   RESEARCH_KEY       default "" (gateway may not require auth)
 #   CANDIDATES_FILE    default $SCRIPT_DIR/candidates.json
 #
@@ -31,7 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URL="${RESEARCH_BASE_URL:-http://localhost:8000}"
-MODEL="${RESEARCH_MODEL:-glm-5.2:cloud}"
+MODEL="${RESEARCH_MODEL:-glm-5.1:cloud}"
 KEY="${RESEARCH_KEY:-}"
 OUT="${CANDIDATES_FILE:-$SCRIPT_DIR/candidates.json}"
 FLOOR_ONLY=0
@@ -109,17 +109,17 @@ if [ "${INCLUDE_LOCAL_OLLAMA:-0}" = "1" ]; then
 fi
 echo "research: deterministic floor: $(jq 'length' "$floor") candidates"
 
-# --- 2. Model research: FREE first; paid cloud only when free fails ----------
+# --- 2. Model research: the cloud model sweeps the web ----------------------
 # A model suggests candidate endpoints beyond the floor; the probe verifies
-# every suggestion for real, so a wrong guess just fails a probe. Policy: try
-# FREE models for this call first (no web search, but free); only if every
-# free route fails do we spend the paid cloud model (glm-5.2:cloud via the
-# gateway, which adds web search). Failure is non-fatal — the floor still ships.
+# every suggestion for real, so a wrong guess just fails a probe. Discovery is
+# ALWAYS the cloud model via the gateway — it's the only route with web search,
+# and finding what's free *today* needs the live web. (The free-first policy
+# lives elsewhere: the probe only tests free endpoints, and prose is written by
+# a free model whenever one passed.) Failure here is non-fatal — the floor
+# still ships.
 research="$WORK/research.json"; echo '[]' > "$research"
 if [ "$FLOOR_ONLY" = 0 ]; then
   PROMPT='Search the web for currently free AI chat model endpoints that speak the OpenAI-compatible /v1/chat/completions API, available today. Include both keyless free tiers AND free-tier-with-key vendors (Groq, Together, NVIDIA NIM, Cerebras, Cloudflare Workers AI, Hugging Face inference, SambaNova, etc.). Respond with ONLY a JSON array — no prose, no markdown fences. Each element is one probeable model: {"id":"<model id to send in the model field>","vendor":"<name>","base_url":"<OpenAI-compatible root, e.g. https://api.groq.com/openai/v1>","needs_key":<true|false>,"key_env":"<env var name for the key, or null>"}. Use only real, current model ids you verified by search; do not invent endpoints.'
-  CONTENT=""
-  MODEL_USED=""
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
   # or pad it with prose; pull the outermost JSON array out and normalize to
@@ -184,63 +184,29 @@ PYEOF
     cat "$rawf" 2>/dev/null || true
   }
 
-  # Route 1: free models via OpenRouter. A reply only counts if it parses to
-  # at least one candidate — free models sometimes refuse ("I can't browse")
-  # and that must NOT block the next route.
-  OR_KEY="${OPENROUTER_API_KEY:-}"
-  if [ -z "$OR_KEY" ] && [ -f "$SCRIPT_DIR/openrouter.config.json" ]; then
-    OR_KEY="$(jq -r '.ANTHROPIC_AUTH_TOKEN // empty' "$SCRIPT_DIR/openrouter.config.json" 2>/dev/null || true)"
-  fi
-  case "$OR_KEY" in ""|null|*PLACEHOLDER*|*YOUR*KEY*) OR_KEY="" ;; esac
-  FREE_MODELS="${RESEARCH_FREE_MODELS:-openrouter/free minimax/minimax-m3:free}"
-  if [ -n "$OR_KEY" ]; then
-    for fm in $FREE_MODELS; do
-      echo "research: trying FREE $fm (openrouter) — cap 120s…" >&2
-      _t0=$(python3 -c 'import time; print(time.time())')
-      RAW="$(jq -n --arg m "$fm" --arg p "$PROMPT" \
-        '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}' \
-        | timed_curl "$fm" 120 https://openrouter.ai/api/v1/chat/completions "$OR_KEY")"
-      C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
-      echo "research: $fm answered in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
-      if [ -n "$C" ]; then
-        N="$(extract_candidates "$C" "$research")"
-        if [ "$N" -gt 0 ] 2>/dev/null; then
-          MODEL_USED="$fm (free)"; break
-        fi
-        echo "research: $fm replied but with no usable candidate list — next route." >&2
-      else
-        echo "research: $fm unusable — $(printf '%s' "$RAW" | jq -r '.error.message // "no content"' 2>/dev/null | head -c 70)" >&2
-      fi
-      echo '[]' > "$research"
-    done
+  echo "research: querying $MODEL via $BASE_URL (web sweep — cap 180s)…" >&2
+  _t0=$(python3 -c 'import time; print(time.time())')
+  REQ="$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
+    '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}')"
+  if [ -n "$KEY" ]; then
+    RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
   else
-    echo "research: no OpenRouter key — free research route unavailable." >&2
+    RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions")"
   fi
-
-  # Route 2: paid cloud fallback, ONLY when every free route failed.
-  if [ -z "$MODEL_USED" ]; then
-    echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
-    _t0=$(python3 -c 'import time; print(time.time())')
-    REQ="$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
-      '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}')"
-    if [ -n "$KEY" ]; then
-      RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
+  echo "research: model call returned in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
+  C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
+  if [ -n "$C" ]; then
+    N="$(extract_candidates "$C" "$research")"
+    if [ "$N" -gt 0 ] 2>/dev/null; then
+      echo "research: $MODEL returned $N candidates"
     else
-      RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions")"
+      echo "research: $MODEL replied but with no usable candidate list — relying on floor." >&2
+      echo '[]' > "$research"
     fi
-    echo "research: paid fallback returned in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
-    C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
-    if [ -n "$C" ]; then
-      N="$(extract_candidates "$C" "$research")"
-      [ "$N" -gt 0 ] 2>/dev/null && MODEL_USED="$MODEL (paid fallback)"
-    fi
-    [ -z "$MODEL_USED" ] && echo '[]' > "$research"
-  fi
-
-  if [ -n "$MODEL_USED" ]; then
-    echo "research: $MODEL_USED returned $(jq 'length' "$research") candidates"
   else
-    echo "research: no usable model reply — relying on floor." >&2
+    echo '[]' > "$research"
+    echo "research: $MODEL returned no content — $(printf '%s' "$RAW" | jq -r '.error.message // "empty response"' 2>/dev/null | head -c 70)" >&2
+    echo "research: relying on the deterministic floor." >&2
   fi
 fi
 
