@@ -354,7 +354,7 @@ PYEOF
       for qi in "${!FREE_QUESTIONS[@]}"; do
         q="${FREE_QUESTIONS[$qi]}"
         echo "research: FREE $fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}…" >&2
-        emit status "$fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}: $(printf '%s' "$q" | head -c 60)…" "$fm"
+        emit status "$fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}: $q" "$fm"
         C="$(jq -n --arg m "$fm" --arg p "$q" \
           '{model: $m, max_tokens: 1200, stream: true, messages: [{role:"user", content: $p}]}' \
           | stream_curl "$fm" "$FQ_TMO" "$FQ_URL" "$FQ_KEY")"
