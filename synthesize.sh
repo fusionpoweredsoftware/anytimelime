@@ -73,7 +73,7 @@ CTX=$(jq -n --argjson passing "$PASS_ARR" --argjson evidence "$EVIDENCE" \
 TIER_JSON=$(jq -n --arg m "$SYNTH_MODEL" --arg ctx "$CTX" \
   '{model: $m, max_tokens: 1000,
     messages: [
-      {role: "system", content: "You assign models to tiers for an agentic coding assistant. OPUS and SONNET need the strongest general coding + tool-use ability (they do the real work). HAIKU handles cheap background tasks and should be fast. Respond with ONLY a JSON object: {\"opus\": \"model-id\", \"sonnet\": \"model-id\", \"haiku\": \"model-id\"} using ids from the passing list. Prefer low latency for haiku. Prefer strongest capability for opus/sonnet."},
+      {role: "system", content: "You assign models to tiers for an agentic coding assistant. OPUS and SONNET need the strongest general coding + tool-use ability (they do the real work). HAIKU handles cheap background tasks and should be fast. ALSO score EVERY passing model 1-5 for agentic/tool-calling work in a Claude-Code-like harness: 5 = can carry real multi-step agentic coding, 3 = usable for light tool tasks or background work, 1 = too small or text-only, fine for prose but not for driving tools. Respond with ONLY a JSON object: {\"opus\": \"model-id\", \"sonnet\": \"model-id\", \"haiku\": \"model-id\", \"scores\": {\"<model-id>\": <1-5>, ...}} covering every id in the passing list. Prefer low latency for haiku. Prefer strongest capability for opus/sonnet."},
       {role: "user", content: $ctx}
     ]}' \
   | curl -s -m 120 https://openrouter.ai/api/v1/chat/completions \
@@ -83,6 +83,25 @@ TIER_JSON=$(jq -n --arg m "$SYNTH_MODEL" --arg ctx "$CTX" \
 
 ASSIGNMENT=$(echo "$TIER_JSON" | jq -r '.choices[0].message.content // empty' \
   | sed 's/^```json//;s/^```//;s/```$//' | jq -c 'try {opus, sonnet, haiku} catch empty' 2>/dev/null || true)
+
+# Agentic scores (1-5) per passing model — separate from the 3 tier slots so
+# every model gets graded, not just the winners. Written to scores.json for
+# blog-gen (field report column + razzle-dazzle pool filter). Heuristic
+# fallback: every passing model made a real tool call, so 3 is the floor.
+SCORES=$(echo "$TIER_JSON" | jq -r '.choices[0].message.content // empty' \
+  | sed 's/^```json//;s/^```//;s/```$//' \
+  | jq -c --argjson p "$PASS_ARR" '
+      try (.scores | with_entries(select(.key as $k | $p | index($k))
+             | .value = (if (.value|type) == "number" and .value >= 1 and .value <= 5
+                         then (.value | floor) else 3 end)))
+      catch {}' 2>/dev/null || true)
+[ "$SCORES" = "null" ] && SCORES="{}"
+# Fill any gaps with the floor score.
+SCORES=$(jq -n --argjson s "$SCORES" --argjson p "$PASS_ARR" \
+  'reduce $p[] as $m ($s; if .[$m] then . else .[$m] = 3 end)')
+jq -n --argjson s "$SCORES" '{updated: (now | todateiso8601), scores: $s}' \
+  > "$SCRIPT_DIR/scores.json"
+echo "Agentic scores: $SCORES"
 
 if ! echo "$ASSIGNMENT" | jq -e '.opus and .sonnet and .haiku' >/dev/null 2>&1 \
    || ! jq -n --argjson a "$ASSIGNMENT" --argjson p "$PASS_ARR" \
