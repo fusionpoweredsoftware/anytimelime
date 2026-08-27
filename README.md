@@ -156,6 +156,10 @@ happened.
 - [ ] Latency trending — turn the roster from a list into a forecast
 - [ ] Credit ledger + inquiry minting
 - [ ] Advertiser station
+- [ ] Sponsor inbox probing: read shoutout@ (the "trade a link" address),
+      extract who placed our banner and where it lives, probe that the banner
+      really is on that page, and feature verified sponsors in a field report.
+      Same rule as everything else: probe before believing.
 - [ ] Beyond-free tiers: ultracheap (paid but near-zero cost) and invite-only
       (free behind an access request) models. The research sweep should find
       them, and candidates.json + latest.json + the report page should carry
