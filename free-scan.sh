@@ -157,6 +157,57 @@ else
 fi
 echo
 
+# --- 1b. Ask for missing vendor keys (interactive runs only) -----------------
+# Keyless candidates always proceed regardless. For candidates that need a key
+# we can't resolve, ask ONCE per distinct key_env at a terminal; Enter skips
+# that vendor's route and the run continues with everything else. Accepted keys
+# go into keys.config.json (gitignored) so this ask happens once, ever. Non-tty
+# runs (cron, blog-gen piped) never prompt — they just note what was skipped.
+MISSING_ENVS=""
+while IFS= read -r _e; do
+  [ -z "$(resolve_key "$_e" || true)" ] && MISSING_ENVS="$_e
+$MISSING_ENVS"
+done < <(awk -F'\t' '$4=="true" && $5!="" && $5!="null" {print $5}' "$CAND_TSV" | sort -u)
+
+if [ -n "$MISSING_ENVS" ] && [ -t 0 ] && [ -t 1 ]; then
+  while IFS= read -r envname; do
+    [ -z "$envname" ] && continue
+    vendor="$(awk -F'\t' -v e="$envname" '$5==e {print $2; exit}' "$CAND_TSV")"
+    echo
+    echo "free-scan: '$vendor' candidates need a key ($envname) that isn't on file."
+    while :; do
+      printf '  Paste %s (Enter to skip this vendor): ' "$envname"
+      if ! IFS= read -rs ans </dev/tty; then
+        echo; echo "  no input available — skipping $vendor."
+        break
+      fi
+      echo
+      if [ -z "$ans" ]; then
+        echo "  skipped — $vendor candidates will be recorded as FAIL: needs key."
+        break
+      fi
+      case "$ans" in *PLACEHOLDER*|*YOUR*KEY*|*PASTE*|*sk-or-PLACEHOLDER*)
+        echo "  that's a placeholder, not a real key — try again."; continue ;; esac
+      if [ "${#ans}" -lt 8 ]; then
+        echo "  too short to be a key — try again."; continue
+      fi
+      umask 077
+      if [ -f "$KEYS_CONFIG" ]; then
+        jq --arg k "$envname" --arg v "$ans" '.[$k]=$v' "$KEYS_CONFIG" \
+          > "$KEYS_CONFIG.tmp" && mv "$KEYS_CONFIG.tmp" "$KEYS_CONFIG"
+      else
+        jq -n --arg k "$envname" --arg v "$ans" '{($k):$v}' > "$KEYS_CONFIG"
+      fi
+      chmod 600 "$KEYS_CONFIG"
+      echo "  saved to $KEYS_CONFIG (gitignored) — won't ask for this one again."
+      break
+    done
+  done <<< "$MISSING_ENVS"
+elif [ -n "$MISSING_ENVS" ]; then
+  echo "free-scan: non-interactive — no key on file for: $(printf '%s' "$MISSING_ENVS" | tr '\n' ' ')(those routes are skipped; keyless candidates proceed)."
+fi
+echo
+
 # --- 2. Probe ---------------------------------------------------------------
 # A probe asks the model to CALL a tool. Text-only replies are recorded as
 # WEAK, not PASS: Claude Code needs tool calls, and a model that can't make
