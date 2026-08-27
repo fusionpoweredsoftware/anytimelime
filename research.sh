@@ -81,6 +81,7 @@ trap 'rm -rf "$WORK"
   [ -n "${DASH_PID:-}" ] && kill "$DASH_PID" 2>/dev/null
   [ -n "${FREE_GATEWAY_PID:-}" ] && kill "$FREE_GATEWAY_PID" 2>/dev/null
   [ -n "${ORPROXY_PID:-}" ] && kill "$ORPROXY_PID" 2>/dev/null
+  [ -n "${PAID_GATEWAY_PID:-}" ] && kill "$PAID_GATEWAY_PID" 2>/dev/null
   true' EXIT
 
 atomic_mv() { local dest="$1" tmp="${1}.tmp.$$"; cat > "$tmp" && mv -f "$tmp" "$dest"; }
@@ -432,15 +433,60 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
 
   # Route 2: paid cloud via the gateway, ONLY when every free route failed.
   if [ -z "$MODEL_USED" ]; then
+    # Self-sufficiency: if nothing is serving $BASE_URL yet, stand the gateway
+    # up ourselves (fork + its vault .env, a models.json entry for $MODEL) —
+    # the same trick as the free stack. The operator never has to remember a
+    # launch ritual; the generator does what it needs.
+    PAID_PORT="${BASE_URL##*:}"; PAID_PORT="${PAID_PORT%%/*}"
+    start_paid_gateway() {
+      local dir="${RAZZLE_GATEWAY_DIR:-$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/razzle-dazzle-api}"
+      local uv="${UVICORN_BIN:-$(command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
+      [ -d "$dir" ] || { echo "research: no gateway dir at $dir — cannot self-start the paid gateway." >&2; return 1; }
+      # Only Ollama is authorized as the paid upstream. Ollama speaks the
+      # Anthropic protocol natively (POST /v1/messages), so the gateway points
+      # straight at it — and every z.ai var is stripped so nothing can ever
+      # route to the personal z.ai account, even if set in the environment.
+      curl -s -m 5 http://localhost:11434/v1/models >/dev/null 2>&1 \
+        || { echo "research: Ollama is not running on :11434 — cannot start the paid gateway." >&2; return 1; }
+      lsof -iTCP:"$PAID_PORT" -sTCP:LISTEN >/dev/null 2>&1 && return 0   # someone already serves it
+      mkdir -p "$SCRIPT_DIR/.paid-gateway"
+      jq -n --arg id "$MODEL" '{default_model:$id, aliases:{},
+        models:[{id:$id, name:$id, description:"paid researcher via the razzle-dazzle harness",
+                 max_tokens:65536, input_cost_per_1k:0, output_cost_per_1k:0,
+                 supports_streaming:true, supports_tools:true}]}' > "$SCRIPT_DIR/.paid-gateway/models.json"
+      ( cd "$dir" && exec env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
+          -u ZAI_API_KEY -u ZAI_CODE_MODEL -u ZAI_ANTHROPIC_BASE_URL -u HYBRID_WEIGHT \
+          ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_AUTH_TOKEN=ollama-local \
+          CLAUDE_CODE_API_MODELS_PATH="$SCRIPT_DIR/.paid-gateway/models.json" \
+          "$uv" claude_code_api.main:app --host 127.0.0.1 --port "$PAID_PORT" ) >/tmp/razzle-"$PAID_PORT".log 2>&1 &
+      PAID_GATEWAY_PID=$!
+      local i
+      for i in $(seq 1 15); do
+        curl -s -m 2 "http://127.0.0.1:$PAID_PORT/health" 2>/dev/null | grep -q healthy && return 0
+        sleep 2
+      done
+      echo "research: self-started gateway never got healthy — tail of /tmp/razzle-$PAID_PORT.log:" >&2
+      tail -5 "/tmp/razzle-$PAID_PORT.log" >&2 || true
+      return 1
+    }
+    if start_paid_gateway; then
+      echo "research: paid gateway serving on :$PAID_PORT (self-started)." >&2
+      emit status "paid gateway up on :$PAID_PORT — no operator ritual needed" ""
+    else
+      echo "research: continuing anyway — the call will fail fast if the port is dead." >&2
+    fi
     echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
     emit status "free routes failed — falling back to PAID $MODEL (web sweep, cap 180s)" "$MODEL"
     _t0=$(python3 -c 'import time; print(time.time())')
+    # Narration eats tokens — the JSON array comes LAST, so the caps must
+    # leave room for a full search story plus the final array. No rush: the
+    # blog may take an hour.
     REQ="$(jq -n --arg m "$MODEL" --arg p "$SWEEP_OPEN$FMT" \
-      '{model: $m, max_tokens: 3000, stream: true, messages: [{role:"user", content: $p}]}')"
+      '{model: $m, max_tokens: 16000, stream: true, messages: [{role:"user", content: $p}]}')"
     if [ -n "$KEY" ]; then
-      C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
+      C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 600 "$BASE_URL/v1/chat/completions" "$KEY")"
     else
-      C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions")"
+      C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 600 "$BASE_URL/v1/chat/completions")"
     fi
     echo "research: paid fallback returned in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
     if [ -n "$C" ]; then

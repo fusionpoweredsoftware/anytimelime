@@ -16,3 +16,4 @@ server/data/
 .DS_Store
 
 .research-live/
+.paid-gateway/
