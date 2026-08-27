@@ -350,6 +350,7 @@ PYEOF
     for fm in $FREE_MODELS; do
       _t0=$(python3 -c 'import time; print(time.time())')
       fm_n=0
+      _miss=0   # consecutive no-answer questions — a wedged model is skipped fast
       for qi in "${!FREE_QUESTIONS[@]}"; do
         q="${FREE_QUESTIONS[$qi]}"
         echo "research: FREE $fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}…" >&2
@@ -365,8 +366,15 @@ PYEOF
             fm_n=$((fm_n + N)); TOTAL_FREE=$((TOTAL_FREE + N))
           fi
         else
-          echo "research: $fm gave no answer to question $((qi + 1)) — moving on." >&2
+          _miss=$((_miss + 1))
+          echo "research: $fm gave no answer to question $((qi + 1)) (miss $_miss) — moving on." >&2
+          if [ "$_miss" -ge 2 ]; then
+            echo "research: $fm silent twice in a row — skipping to the next model." >&2
+            emit status "$fm silent twice in a row — skipping to the next free model" "$fm"
+            break
+          fi
         fi
+        [ -n "$C" ] && _miss=0
       done
       echo "research: $fm done in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')") — contributed $fm_n candidate(s)" >&2
       if [ "$fm_n" -gt 0 ]; then

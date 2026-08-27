@@ -128,12 +128,16 @@ async function poll() {
     const r = await fetch("events.jsonl", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     const text = await r.text();
-    const lines = text.split("\n").filter(Boolean);
+    // Only complete lines count: a fetch racing an append can deliver a
+    // half-written last line — parsing it fails and, if counted as seen,
+    // its remainder is never rendered (text vanishes mid-token).
+    const complete = text.endsWith("\n") ? text : text.slice(0, text.lastIndexOf("\n"));
+    const lines = complete.split("\n").filter(Boolean);
     if (lines.length < seen) { body.textContent = ""; seen = 0; deltaPara = null; caret = null; } // new run
     for (const l of lines.slice(seen)) {
       try { render(JSON.parse(l)); } catch {}
-      seen++;
     }
+    seen = lines.length;
     if (lines.length && statusEl.className.indexOf("done") === -1) {
       const last = JSON.parse(lines[lines.length - 1]);
       if (last.kind !== "done") setStatus("live", last.kind === "delta" ? "streaming answer…" : "working…");
