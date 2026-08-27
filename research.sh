@@ -200,7 +200,13 @@ if [ "$FLOOR_ONLY" = 0 ]; then
   # The model's ONLY job is what no catalog can do: the community sweep, plus
   # anything exotic it can verify itself. Vendor model lists come from the
   # deterministic catalog fetches in the floor — never from a model.
-  SWEEP_OPEN='Some websites publish a section titled AnytimeLime Endpoint that lists a free AI model id and a base URL (the anytimelime community network — look for the exact phrase AnytimeLime Endpoint, and the HTML comment <!-- anytimelime -->). Search the web, one search at a time: send a query, read the results, then decide the next query. NARRATE as you work — before each search say what you are looking for and why; after it say what you found or did not, in plain sentences — then end with the JSON array. Report every endpoint those pages list, with the site as the vendor. Also include any OTHER free OpenAI-compatible chat endpoints you find along the way that you verified yourself. Work at your own pace — correctness over speed. '
+  SWEEP_OPEN='Two-part mission, in this order of effort.
+
+PART 1 (spend at most 2-3 searches here, then stop): some websites publish a section titled AnytimeLime Endpoint listing a free AI model id and base URL (the anytimelime community network — exact phrase AnytimeLime Endpoint, HTML comment <!-- anytimelime -->). It is EARLY DAYS: few or zero such pages may exist. If your first couple of searches find nothing, say so in one sentence and MOVE ON — do not keep rephrasing the query.
+
+PART 2 (most of your effort): currently-free AI chat endpoints that speak the OpenAI-compatible /v1/chat/completions API — keyless ones and free-tier vendors beyond the big well-known catalogs. Search one query at a time, read the results, then decide the next. NARRATE as you work — before each search say what you are looking for; after it say what you found — then end with the JSON array.
+
+Work at your own pace — correctness over speed. '
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
   # or pad it with prose; pull the outermost JSON array out and normalize to
