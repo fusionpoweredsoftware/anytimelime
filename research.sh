@@ -146,6 +146,27 @@ PYEOF
     jq 'length' "$2" 2>/dev/null || echo 0
   }
 
+  # timed_curl <label> <timeout_s> <url> [auth_header] — curl in the
+  # background with a live ticker, so a slow model never looks like a hang.
+  # Raw body lands in $WORK/raw.$$, echoed on stdout.
+  timed_curl() { # timed_curl <label> <timeout_s> <url> [bearer]
+    local label="$1" tmo="$2" url="$3" bearer="${4:-}" rawf="$WORK/raw.$$" el=0
+    if [ -n "$bearer" ]; then
+      ( curl -s -m "$tmo" "$url" -H "Authorization: Bearer $bearer" \
+          -H "content-type: application/json" -d @- > "$rawf" 2>/dev/null || true ) &
+    else
+      ( curl -s -m "$tmo" "$url" -H "content-type: application/json" \
+          -d @- > "$rawf" 2>/dev/null || true ) &
+    fi
+    local pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 15; el=$((el + 15))
+      [ $el -ge "$tmo" ] || echo "research:   …still waiting on $label — ${el}s elapsed (cap ${tmo}s)" >&2
+    done
+    wait "$pid" 2>/dev/null || true
+    cat "$rawf" 2>/dev/null || true
+  }
+
   # Route 1: free models via OpenRouter. A reply only counts if it parses to
   # at least one candidate — free models sometimes refuse ("I can't browse")
   # and that must NOT block the next route.
@@ -157,12 +178,11 @@ PYEOF
   FREE_MODELS="${RESEARCH_FREE_MODELS:-openrouter/free minimax/minimax-m3:free}"
   if [ -n "$OR_KEY" ]; then
     for fm in $FREE_MODELS; do
-      echo "research: trying FREE $fm (openrouter) — up to 120s, no news until it answers…" >&2
+      echo "research: trying FREE $fm (openrouter) — cap 120s…" >&2
       _t0=$(python3 -c 'import time; print(time.time())')
       RAW="$(jq -n --arg m "$fm" --arg p "$PROMPT" \
         '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}' \
-        | curl -s -m 120 https://openrouter.ai/api/v1/chat/completions \
-          -H "Authorization: Bearer $OR_KEY" -H "content-type: application/json" -d @- 2>/dev/null || true)"
+        | timed_curl "$fm" 120 https://openrouter.ai/api/v1/chat/completions "$OR_KEY")"
       C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
       echo "research: $fm answered in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
       if [ -n "$C" ]; then
@@ -182,19 +202,14 @@ PYEOF
 
   # Route 2: paid cloud fallback, ONLY when every free route failed.
   if [ -z "$MODEL_USED" ]; then
-    echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL" >&2
-    echo "          (web sweep — up to 180s, silence is normal)…" >&2
+    echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
     _t0=$(python3 -c 'import time; print(time.time())')
+    REQ="$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
+      '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}')"
     if [ -n "$KEY" ]; then
-      RAW="$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
-        '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}' \
-        | curl -s -m 180 "$BASE_URL/v1/chat/completions" \
-          -H "Authorization: Bearer $KEY" -H "content-type: application/json" -d @- 2>/dev/null || true)"
+      RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
     else
-      RAW="$(jq -n --arg m "$MODEL" --arg p "$PROMPT" \
-        '{model: $m, max_tokens: 3000, messages: [{role:"user", content: $p}]}' \
-        | curl -s -m 180 "$BASE_URL/v1/chat/completions" \
-          -H "content-type: application/json" -d @- 2>/dev/null || true)"
+      RAW="$(printf '%s' "$REQ" | timed_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions")"
     fi
     echo "research: paid fallback returned in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')")" >&2
     C="$(printf '%s' "$RAW" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"

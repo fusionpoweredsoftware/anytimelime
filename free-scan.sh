@@ -169,27 +169,35 @@ while IFS= read -r _e; do
 $MISSING_ENVS"
 done < <(awk -F'\t' '$4=="true" && $5!="" && $5!="null" {print $5}' "$CAND_TSV" | sort -u)
 
-if [ -n "$MISSING_ENVS" ] && [ -t 0 ] && [ -t 1 ]; then
+# A controlling terminal is enough — prompts read AND write /dev/tty directly,
+# so this still asks when run under blog-gen (which pipes stdout/stderr). Cron
+# has no controlling tty: the /dev/tty open fails and we take the note-and-
+# continue path instead.
+ASK_TTY=0
+if [ -n "$MISSING_ENVS" ] && exec 3<>/dev/tty 2>/dev/null; then
+  ASK_TTY=1
+fi
+if [ "$ASK_TTY" = 1 ]; then
   while IFS= read -r envname; do
     [ -z "$envname" ] && continue
     vendor="$(awk -F'\t' -v e="$envname" '$5==e {print $2; exit}' "$CAND_TSV")"
-    echo
-    echo "free-scan: '$vendor' candidates need a key ($envname) that isn't on file."
+    echo >&3
+    echo "free-scan: '$vendor' candidates need a key ($envname) that isn't on file." >&3
     while :; do
-      printf '  Paste %s (Enter to skip this vendor): ' "$envname"
-      if ! IFS= read -rs ans </dev/tty; then
-        echo; echo "  no input available — skipping $vendor."
+      printf '  Paste %s (Enter to skip this vendor): ' "$envname" >&3
+      if ! IFS= read -rs ans <&3; then
+        echo >&3; echo "  no input available — skipping $vendor." >&3
         break
       fi
-      echo
+      echo >&3
       if [ -z "$ans" ]; then
-        echo "  skipped — $vendor candidates will be recorded as FAIL: needs key."
+        echo "  skipped — $vendor candidates will be recorded as FAIL: needs key." >&3
         break
       fi
       case "$ans" in *PLACEHOLDER*|*YOUR*KEY*|*PASTE*|*sk-or-PLACEHOLDER*)
-        echo "  that's a placeholder, not a real key — try again."; continue ;; esac
+        echo "  that's a placeholder, not a real key — try again." >&3; continue ;; esac
       if [ "${#ans}" -lt 8 ]; then
-        echo "  too short to be a key — try again."; continue
+        echo "  too short to be a key — try again." >&3; continue
       fi
       umask 077
       if [ -f "$KEYS_CONFIG" ]; then
@@ -199,7 +207,7 @@ if [ -n "$MISSING_ENVS" ] && [ -t 0 ] && [ -t 1 ]; then
         jq -n --arg k "$envname" --arg v "$ans" '{($k):$v}' > "$KEYS_CONFIG"
       fi
       chmod 600 "$KEYS_CONFIG"
-      echo "  saved to $KEYS_CONFIG (gitignored) — won't ask for this one again."
+      echo "  saved to $KEYS_CONFIG (gitignored) — won't ask for this one again." >&3
       break
     done
   done <<< "$MISSING_ENVS"
