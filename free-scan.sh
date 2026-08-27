@@ -213,7 +213,22 @@ if [ "$ASK_TTY" = 1 ]; then
     echo "  (skipped models are reported as 'needs key'; everything else still runs)." >&3
     while :; do
       printf '  %s: ' "$envname" >&3
-      if ! IFS= read -rs ans <&3; then
+      # Read char-by-char with '*' feedback: a fully silent prompt (-rs) makes
+      # a paste look like it didn't land. Backspace erases, Enter submits.
+      ans=""
+      _ok=1
+      while IFS= read -r -n 1 -s _c <&3; do
+        if [ -z "$_c" ]; then break; fi               # Enter pressed
+        if [ "$_c" = $'\177' ] || [ "$_c" = $'\b' ]; then
+          [ -n "$ans" ] && { ans="${ans%?}"; printf '\b \b' >&3; }
+          continue
+        fi
+        ans="$ans$_c"
+        printf '*' >&3
+      done || _ok=0
+      # _c holds the Enter; if the read loop died with no terminator (EOF /
+      # no input at all), treat as skip.
+      if [ "$_ok" = 0 ] && [ -z "$ans" ]; then
         echo >&3; echo "  no input available — skipping $vendor." >&3
         break
       fi
