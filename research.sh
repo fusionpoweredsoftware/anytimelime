@@ -37,13 +37,29 @@ KEY="${RESEARCH_KEY:-}"
 OUT="${CANDIDATES_FILE:-$SCRIPT_DIR/candidates.json}"
 FLOOR_ONLY=0
 FORCE=0
+FORCE_MODEL=""
+_prev=""
 for _a in "$@"; do
   case "$_a" in
-    --floor-only) FLOOR_ONLY=1 ;;
-    --force)      FORCE=1 ;;
-    *) echo "research: unknown flag '$_a'" >&2; exit 2 ;;
+    --floor-only)   FLOOR_ONLY=1 ;;
+    --force)        FORCE=1 ;;
+    --force-model)  _prev="fm" ;;
+    *) if [ "$_prev" = "fm" ]; then
+         FORCE_MODEL="$_a"; _prev=""
+       else
+         echo "research: unknown flag '$_a'" >&2; exit 2
+       fi ;;
   esac
 done
+# --force-model <model>: research with ONE named model and skip the free pool
+# entirely (implies --force). Made for testing — e.g. --force-model
+# glm-5.2:cloud goes straight to the paid sweep without burning free-tier
+# bandwidth on the pool's questions and searches.
+if [ -n "$FORCE_MODEL" ]; then
+  MODEL="$FORCE_MODEL"
+  FORCE=1
+  echo "research: --force-model — using $MODEL only, free pool skipped." >&2
+fi
 
 # Reuse window: if candidates.json was written less than RESEARCH_TTL seconds
 # ago, skip everything and hand the fresh list back as-is. Re-running blog-gen
@@ -351,7 +367,7 @@ PYEOF
   else
     FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=90
   fi
-  if [ -n "$OR_KEY" ]; then
+  if [ -n "$OR_KEY" ] && [ -z "$FORCE_MODEL" ]; then
     echo "research: free pool — $(printf '%s' "$FREE_MODELS" | wc -w | tr -d ' ') model(s), ${#FREE_QUESTIONS[@]} small questions each" >&2
     emit status "free pool: $(printf '%s' "$FREE_MODELS" | wc -w | tr -d ' ') models × ${#FREE_QUESTIONS[@]} questions"
     TOTAL_FREE=0
