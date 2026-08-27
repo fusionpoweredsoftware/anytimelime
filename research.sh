@@ -236,6 +236,14 @@ PYEOF
             printf '%s' "$_d" >> "$cf"
             emit delta "$_d" "$label"
             echo "research:   ▸ $label: ${_d}" | head -c 200 >&2
+          fi
+          # razzle-dazzle-api forwards the agent's tool calls (WebSearch etc.)
+          # as delta.tool_calls — surface every one as an activity line so the
+          # dashboard shows the agent WORKING, not just its final answer.
+          _tc="$(printf '%s' "${_l#data:}" | jq -r '[.choices[0].delta.tool_calls[]? | (.function.name // "?") + " " + ((.function.arguments // "") | .[0:160]) ] | join(" | ")' 2>/dev/null || true)"
+          if [ -n "$_tc" ]; then
+            emit activity "⚒ $_tc" "$label"
+            echo "research:   ⚒ $label: $_tc" | head -c 300 >&2
           fi ;;
         esac
       done ) &
@@ -305,7 +313,7 @@ PYEOF
   # direct OpenRouter calls — free either way.
   FREE_GATEWAY_PORT="${FREE_GATEWAY_PORT:-8022}"
   ORPROXY_PORT="${ORPROXY_PORT:-8099}"
-  GATEWAY_DIR="${RAZZLE_GATEWAY_DIR:-$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/claude-code-api}"
+  GATEWAY_DIR="${RAZZLE_GATEWAY_DIR:-$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/razzle-dazzle-api}"
   UVICORN_BIN="${UVICORN_BIN:-$(command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
   FREE_ENDPOINT=""
   start_free_stack() {

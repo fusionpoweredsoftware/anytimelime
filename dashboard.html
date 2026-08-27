@@ -48,6 +48,7 @@
   .cc-line { margin-bottom: 4px; }
   .cc-line .t { color: #4d4a42; margin-right: 8px; font-size: 11px; }
   .cc-status { color: #9ec3e6; }
+  .cc-activity { color: #d9a05f; }
   .cc-delta { color: #e8e4dc; }
   .cc-done { color: #28c840; font-weight: 700; }
   .cc-caret {
@@ -118,6 +119,7 @@ function render(ev) {
   }
   closeDeltaBlock();
   if (ev.kind === "done") s.className = "cc-done";
+  else if (ev.kind === "activity") s.className = "cc-activity";
   else if (ev.kind === "status") s.className = "cc-status";
   s.textContent = ev.text;
   line.append(t, s); body.appendChild(line);
