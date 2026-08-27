@@ -210,7 +210,7 @@ PYEOF
       fi | while IFS= read -r _l; do
         printf '%s\n' "$_l" >> "$rawf"
         case "$_l" in data:*)
-          _d="$(printf '%s' "$_l" | jq -r '.choices[0].delta.content // empty' 2>/dev/null || true)"
+          _d="$(printf '%s' "${_l#data:}" | jq -r '.choices[0].delta.content // empty' 2>/dev/null || true)"
           if [ -n "$_d" ]; then
             printf '%s' "$_d" >> "$cf"
             emit delta "$_d" "$label"
