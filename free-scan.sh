@@ -162,7 +162,24 @@ echo
 # we can't resolve, ask ONCE per distinct key_env at a terminal; Enter skips
 # that vendor's route and the run continues with everything else. Accepted keys
 # go into keys.config.json (gitignored) so this ask happens once, ever. Non-tty
-# runs (cron, blog-gen piped) never prompt — they just note what was skipped.
+# runs (cron) never prompt — they just note what was skipped.
+#
+# signup_url: where a human gets the key this prompt asks for. These vendors'
+# free tiers need an account; the URL is printed with the prompt so "wtf does
+# this mean" is answered in place.
+signup_url() { # signup_url <key_env>
+  case "$1" in
+    GROQ_API_KEY)      echo "https://console.groq.com/keys" ;;
+    CEREBRAS_API_KEY)  echo "https://cloud.cerebras.ai" ;;
+    CLOUDFLARE_API_KEY) echo "https://dash.cloudflare.com/profile/api-tokens" ;;
+    TOGETHER_API_KEY)  echo "https://api.together.ai/settings/api-keys" ;;
+    NVIDIA_API_KEY)    echo "https://build.nvidia.com" ;;
+    SAMBANOVA_API_KEY) echo "https://cloud.sambanova.ai/apis" ;;
+    HF_TOKEN)          echo "https://huggingface.co/settings/tokens" ;;
+    OPENROUTER_API_KEY) echo "https://openrouter.ai/keys" ;;
+    *) echo "" ;;
+  esac
+}
 MISSING_ENVS=""
 while IFS= read -r _e; do
   [ -z "$(resolve_key "$_e" || true)" ] && MISSING_ENVS="$_e
@@ -178,13 +195,24 @@ if [ -n "$MISSING_ENVS" ] && exec 3<>/dev/tty 2>/dev/null; then
   ASK_TTY=1
 fi
 if [ "$ASK_TTY" = 1 ]; then
+  TOTAL_MISSING="$(printf '%s' "$MISSING_ENVS" | grep -c . || true)"
+  NTH=0
   while IFS= read -r envname; do
     [ -z "$envname" ] && continue
+    NTH=$((NTH + 1))
     vendor="$(awk -F'\t' -v e="$envname" '$5==e {print $2; exit}' "$CAND_TSV")"
+    n_models="$(awk -F'\t' -v e="$envname" '$5==e' "$CAND_TSV" | wc -l | tr -d ' ')"
+    url="$(signup_url "$envname")"
     echo >&3
-    echo "free-scan: '$vendor' candidates need a key ($envname) that isn't on file." >&3
+    echo "free-scan: [$NTH/$TOTAL_MISSING] research found $n_models '$vendor' model(s)." >&3
+    echo "  Their free tier requires an API key (a free account's key — not paid credit)." >&3
+    if [ -n "$url" ]; then
+      echo "  Get one at: $url" >&3
+    fi
+    echo "  Paste a $envname to probe $vendor's models, or press Enter to skip them" >&3
+    echo "  (skipped models are reported as 'needs key'; everything else still runs)." >&3
     while :; do
-      printf '  Paste %s (Enter to skip this vendor): ' "$envname" >&3
+      printf '  %s: ' "$envname" >&3
       if ! IFS= read -rs ans <&3; then
         echo >&3; echo "  no input available — skipping $vendor." >&3
         break
