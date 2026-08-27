@@ -35,12 +35,29 @@ MODEL="${RESEARCH_MODEL:-glm-5.2:cloud}"
 KEY="${RESEARCH_KEY:-}"
 OUT="${CANDIDATES_FILE:-$SCRIPT_DIR/candidates.json}"
 FLOOR_ONLY=0
+FORCE=0
 for _a in "$@"; do
   case "$_a" in
     --floor-only) FLOOR_ONLY=1 ;;
+    --force)      FORCE=1 ;;
     *) echo "research: unknown flag '$_a'" >&2; exit 2 ;;
   esac
 done
+
+# Reuse window: if candidates.json was written less than RESEARCH_TTL seconds
+# ago, skip everything and hand the fresh list back as-is. Re-running blog-gen
+# (or setup, or a manual retry) within the hour must not re-pay the research
+# cost in time or tokens. --force ignores the window.
+TTL="${RESEARCH_TTL:-3600}"
+if [ "$FORCE" = 0 ] && [ "$FLOOR_ONLY" = 0 ] && [ -f "$OUT" ] \
+   && jq -e 'type == "array" and length > 0' "$OUT" >/dev/null 2>&1; then
+  AGE=$(( $(date +%s) - $(stat -f %m "$OUT" 2>/dev/null || stat -c %Y "$OUT") ))
+  if [ "$AGE" -lt "$TTL" ]; then
+    echo "research: candidates.json is ${AGE}s old (< ${TTL}s) — reusing it, no re-research. Use --force to override."
+    exit 0
+  fi
+  echo "research: candidates.json is ${AGE}s old (>= ${TTL}s) — refreshing."
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
