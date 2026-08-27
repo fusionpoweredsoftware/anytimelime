@@ -51,14 +51,13 @@ for _a in "$@"; do
        fi ;;
   esac
 done
-# --force-model <model>: research with ONE named model and skip the free pool
-# entirely (implies --force). Made for testing — e.g. --force-model
-# glm-5.2:cloud goes straight to the paid sweep without burning free-tier
-# bandwidth on the pool's questions and searches.
+# --force-model <model>: the paid sweep runs with this ONE named model instead
+# of the gateway default (implies --force). It changes who researches — the
+# free route (asking the free pool for endpoint tips) still runs as usual.
 if [ -n "$FORCE_MODEL" ]; then
   MODEL="$FORCE_MODEL"
   FORCE=1
-  echo "research: --force-model — using $MODEL only, free pool skipped." >&2
+  echo "research: --force-model — paid sweep will use $MODEL; free route unaffected." >&2
 fi
 
 # Reuse window: if candidates.json was written less than RESEARCH_TTL seconds
@@ -372,7 +371,7 @@ PYEOF
   else
     FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=180
   fi
-  if [ -n "$OR_KEY" ] && [ -z "$FORCE_MODEL" ]; then
+  if [ -n "$OR_KEY" ]; then
     # ONE conversation at a time, one question at a time inside it. Turn cap
     # 4: open with the community sweep, then follow-ups built from what the
     # previous answer actually said. Generous caps — the run may take an hour.
