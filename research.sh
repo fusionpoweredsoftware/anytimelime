@@ -114,6 +114,32 @@ if printf '%s' "$OR_CATALOG" | jq -e '.data' >/dev/null 2>&1; then
     '.data[] | select(.pricing.prompt == "0" and .pricing.completion == "0") | .id')
 fi
 
+# Keyless vendor /v1/models catalogs — Groq, Cerebras, Together, NVIDIA NIM,
+# SambaNova. The model LIST at each is public; chat needs a key, so candidates
+# land as needs_key=true with the vendor's env var. Cloudflare is skipped
+# (its OpenAI-compat endpoint needs an account_id in the path) and Hugging
+# Face too (floods the list with thousands of junk repo-models). The model
+# writes prose, never data: vendor model lists come from HERE, not from a model.
+add_catalog() { # add_catalog <vendor> <catalog-url> <base_url> <key_env>
+  local vendor="$1" url="$2" base="$3" keyenv="$4" cat
+  cat="$(curl -s -m 20 "$url" || true)"
+  printf '%s' "$cat" | jq -e '.data' >/dev/null 2>&1 || return 0
+  local n=0 id
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    jq -c --arg id "$id" --arg v "$vendor" --arg b "$base" --arg ke "$keyenv" \
+        '. + [{id:$id, vendor:$v, base_url:$b, needs_key:true, key_env:$ke, source:"catalog"}]' \
+        "$floor" > "$floor.tmp" && mv "$floor.tmp" "$floor"
+    n=$((n + 1))
+  done < <(printf '%s' "$cat" | jq -r '.data[].id' | grep -vE '(embed|rerank|whisper|tts|guard|moderation|vision-encoder)' | head -60)
+  echo "research: catalog $vendor: $n models" >&2
+}
+add_catalog groq      "https://api.groq.com/openai/v1/models" "https://api.groq.com/openai/v1" GROQ_API_KEY
+add_catalog cerebras  "https://api.cerebras.ai/v1/models"     "https://api.cerebras.ai/v1"    CEREBRAS_API_KEY
+add_catalog together  "https://api.together.xyz/v1/models"    "https://api.together.xyz/v1"   TOGETHER_API_KEY
+add_catalog nvidia    "https://integrate.api.nvidia.com/v1/models" "https://integrate.api.nvidia.com/v1" NVIDIA_API_KEY
+add_catalog sambanova "https://api.sambanova.ai/v1/models"    "https://api.sambanova.ai/v1"   SAMBANOVA_API_KEY
+
 # Local Ollama (keyless). OFF by default: these are models on the operator's
 # own machine, not "the internet", and probing them loads + runs them locally
 # (heavy). Set INCLUDE_LOCAL_OLLAMA=1 to add them as candidates — e.g. when
@@ -170,17 +196,10 @@ if [ "$FLOOR_ONLY" = 0 ]; then
   # verifies everything anyway. The paid sweep prompt stays whole: that model
   # has web search and handles the big ask.
   FMT='Reply with ONLY a JSON array, no prose, no markdown fences. Each element: {"id":"<model id>","vendor":"<name>","base_url":"<OpenAI-compatible root>","needs_key":true,"key_env":"<env var name for the key>","docs":"<documentation URL or null>"}. Reply [] if unsure — never invent ids or URLs.'
-  FREE_QUESTIONS=(
-    "Groq has a free tier. What is the OpenAI-compatible base URL of the Groq API, and which chat models are free there right now? $FMT (use vendor groq, key_env GROQ_API_KEY)"
-    "Cerebras has a free tier. What is its OpenAI-compatible base URL and which chat models are free right now? $FMT (use vendor cerebras, key_env CEREBRAS_API_KEY)"
-    "Cloudflare Workers AI has a free tier. What is its OpenAI-compatible base URL and which models are free right now? $FMT (use vendor cloudflare, key_env CLOUDFLARE_API_TOKEN)"
-    "Together AI has a free tier. What is its OpenAI-compatible base URL and which models are free right now? $FMT (use vendor together, key_env TOGETHER_API_KEY)"
-    "NVIDIA NIM (build.nvidia.com) has a free tier. What is its OpenAI-compatible base URL and which models are free right now? $FMT (use vendor nvidia, key_env NVIDIA_API_KEY)"
-    "SambaNova has a free tier. What is its OpenAI-compatible base URL and which models are free right now? $FMT (use vendor sambanova, key_env SAMBANOVA_API_KEY)"
-    "Hugging Face Inference Providers have a free monthly allowance. What is the OpenAI-compatible base URL and which chat models are free right now? $FMT (use vendor huggingface, key_env HF_TOKEN)"
-    "Some websites publish a section titled AnytimeLime Endpoint that lists a free AI model id and a base URL. Search the web for that exact phrase and report every endpoint those pages list, with the site as the vendor. $FMT (needs_key only if the page says a key is required)"
-  )
-  SWEEP_PROMPT='Search the web for currently free AI chat model endpoints that speak the OpenAI-compatible /v1/chat/completions API, available today. Include both keyless free tiers AND free-tier-with-key vendors (Groq, Together, NVIDIA NIM, Cerebras, Cloudflare Workers AI, Hugging Face inference, SambaNova, etc.). ALSO look for anytimelime community-network members: pages whose source contains the anytimelime tag and access details labeled AnytimeLime Endpoint (<!-- anytimelime --> followed by a list where each entry reads AnytimeLime Endpoint and gives a model id and base URL) — include every endpoint they list, with the site as the vendor. Respond with ONLY a JSON array — no prose, no markdown fences. Each element is one probeable model: {"id":"<model id to send in the model field>","vendor":"<name>","base_url":"<OpenAI-compatible root, e.g. https://api.groq.com/openai/v1>","needs_key":<true|false>,"key_env":"<env var name for the key, or null>","docs":"<URL of the endpoint documentation page, or null>"}. Use only real, current model ids you verified by search; do not invent endpoints.'
+  # The model's ONLY job is what no catalog can do: the community sweep, plus
+  # anything exotic it can verify itself. Vendor model lists come from the
+  # deterministic catalog fetches in the floor — never from a model.
+  SWEEP_OPEN='Some websites publish a section titled AnytimeLime Endpoint that lists a free AI model id and a base URL (the anytimelime community network — look for the exact phrase AnytimeLime Endpoint, and the HTML comment <!-- anytimelime -->). Search the web, one search at a time: send a query, read the results, then decide the next query. Report every endpoint those pages list, with the site as the vendor. Also include any OTHER free OpenAI-compatible chat endpoints you find along the way that you verified yourself. Work at your own pace — correctness over speed. '
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
   # or pad it with prose; pull the outermost JSON array out and normalize to
@@ -280,32 +299,11 @@ PYEOF
     cat "$cf" 2>/dev/null || true
   }
 
-  # followup_rounds <model> <url> <bearer> <timeout> <prompt-prefix> — a model
-  # that contributed anything is asked whether there is MORE it did not list
-  # yet, until it answers [] (done) or 3 extra rounds pass. Models hold back
-  # on the first ask; the nudge finds the tail. Echoes the extra count.
-  followup_rounds() { # followup_rounds <model> <url> <bearer> <timeout> <prefix>
-    local m="$1" url="$2" bearer="$3" tmo="$4" prefix="$5" round=1 extra_n=0
-    while [ "$round" -le 3 ]; do
-      local sofar tmpf N C
-      sofar="$(jq -r '[.[].id] | .[-30:] | join(", ")' "$research")"
-      echo "research: $m — follow-up round $round (anything not listed yet?)…" >&2
-      emit status "$m — follow-up round $round: any endpoints not listed yet?" "$m"
-      C="$(jq -n --arg m "$m" --arg p "$prefix So far these are already found: $sofar. Are there more free OpenAI-compatible model endpoints NOT in that list? $FMT" \
-        '{model: $m, max_tokens: 1200, stream: true, messages: [{role:"user", content: $p}]}' \
-        | stream_curl "$m" "$tmo" "$url" "$bearer")"
-      [ -z "$C" ] && break
-      tmpf="$WORK/fu.$$.json"
-      N="$(extract_candidates "$C" "$tmpf")"
-      if [ "$N" -gt 0 ] 2>/dev/null; then
-        jq -s '.[0] + .[1]' "$research" "$tmpf" > "$research.tmp" && mv "$research.tmp" "$research"
-        extra_n=$((extra_n + N)); round=$((round + 1))
-      else
-        break
-      fi
-    done
-    echo "$extra_n"
-  }
+  # followup_rounds and the question battery are GONE. The sweep is now a
+  # SEQUENTIAL conversation: one model, one thread, one question at a time —
+  # ask, let the answer FULLY finish, read it, then compose the next question
+  # informed by what came back. No parallel bursts, no time pressure: the blog
+  # is allowed to take an hour.
 
   # Route 1: FREE models via OpenRouter — as many as we have. The pool is
   # normally today's probe passers (blog-gen injects them via
@@ -363,56 +361,69 @@ PYEOF
     echo "research: free stack unavailable — free models answer from memory (no browsing)." >&2
   fi
   if [ -n "$FREE_ENDPOINT" ]; then
-    FQ_URL="$FREE_ENDPOINT/v1/chat/completions"; FQ_KEY=""; FQ_TMO=180
+    FQ_URL="$FREE_ENDPOINT/v1/chat/completions"; FQ_KEY=""; FQ_TMO=600
   else
-    FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=90
+    FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=180
   fi
   if [ -n "$OR_KEY" ] && [ -z "$FORCE_MODEL" ]; then
-    echo "research: free pool — $(printf '%s' "$FREE_MODELS" | wc -w | tr -d ' ') model(s), ${#FREE_QUESTIONS[@]} small questions each" >&2
-    emit status "free pool: $(printf '%s' "$FREE_MODELS" | wc -w | tr -d ' ') models × ${#FREE_QUESTIONS[@]} questions"
-    TOTAL_FREE=0
+    # ONE conversation at a time, one question at a time inside it. Turn cap
+    # 4: open with the community sweep, then follow-ups built from what the
+    # previous answer actually said. Generous caps — the run may take an hour.
+    TOTAL_FREE=0; MODEL_USED=""
     for fm in $FREE_MODELS; do
+      [ "$TOTAL_FREE" -gt 0 ] && break   # a passer delivered — done, no more spend
       _t0=$(python3 -c 'import time; print(time.time())')
-      fm_n=0
-      _miss=0   # consecutive no-answer questions — a wedged model is skipped fast
-      for qi in "${!FREE_QUESTIONS[@]}"; do
-        q="${FREE_QUESTIONS[$qi]}"
-        echo "research: FREE $fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}…" >&2
-        emit status "$fm — question $((qi + 1))/${#FREE_QUESTIONS[@]}: $q" "$fm"
-        C="$(jq -n --arg m "$fm" --arg p "$q" \
-          '{model: $m, max_tokens: 1200, stream: true, messages: [{role:"user", content: $p}]}' \
-          | stream_curl "$fm" "$FQ_TMO" "$FQ_URL" "$FQ_KEY")"
-        if [ -n "$C" ]; then
-          tmpf="$WORK/q.$$.json"
-          N="$(extract_candidates "$C" "$tmpf")"
-          if [ "$N" -gt 0 ] 2>/dev/null; then
-            jq -s '.[0] + .[1]' "$research" "$tmpf" > "$research.tmp" && mv "$research.tmp" "$research"
-            fm_n=$((fm_n + N)); TOTAL_FREE=$((TOTAL_FREE + N))
-          fi
+      echo "research: FREE $fm — opening a sequential conversation (turn cap 4, no rush)…" >&2
+      emit status "$fm — opening a sequential conversation, one question at a time" "$fm"
+      CONVO="$WORK/convo.$$.json"; echo '[]' > "$CONVO"
+      turn=1; misses=0
+      while [ "$turn" -le 4 ]; do
+        if [ "$turn" -eq 1 ]; then
+          Q="$SWEEP_OPEN$FMT"
         else
-          _miss=$((_miss + 1))
-          echo "research: $fm gave no answer to question $((qi + 1)) (miss $_miss) — moving on." >&2
-          if [ "$_miss" -ge 2 ]; then
-            echo "research: $fm silent twice in a row — skipping to the next model." >&2
-            emit status "$fm silent twice in a row — skipping to the next free model" "$fm"
-            break
-          fi
+          # Follow-up composed from the previous answer's own words.
+          PREV_TAIL="$(jq -r '.[-1].content // ""' "$CONVO" | tail -c 1200)"
+          Q="Here is your previous answer, for context: $PREV_TAIL
+
+Read your own answer back. What is incomplete or unverified in it? Pick the ONE most promising loose end and dig into it now — one search at a time, finish the thought before concluding. If a loose end turns out to be a real free OpenAI-compatible chat endpoint, report it in the same JSON format. $FMT — and if you are genuinely done, reply [] and say so in one sentence of prose."
         fi
-        [ -n "$C" ] && _miss=0
+        echo "research: $fm — turn $turn/4, waiting for the full answer…" >&2
+        emit status "$fm — turn $turn/4: asking, then waiting for the full answer" "$fm"
+        C="$(jq -n --arg m "$fm" --argjson msgs "$(cat "$CONVO")" --arg q "$Q" \
+          '{model: $m, max_tokens: 3000, stream: true, messages: ($msgs + [{role:"user", content: $q}])}' \
+          | stream_curl "$fm" "$FQ_TMO" "$FQ_URL" "$FQ_KEY")"
+        if [ -z "$C" ]; then
+          misses=$((misses + 1))
+          echo "research: $fm gave no answer on turn $turn (miss $misses)." >&2
+          [ "$misses" -ge 2 ] && { echo "research: $fm silent twice — next model." >&2; emit status "$fm silent twice — moving to the next free model" "$fm"; break; }
+          continue
+        fi
+        misses=0
+        # Record the turn — full history rides on the next request.
+        jq -c --arg q "$Q" --arg a "$C" \
+          '. + [{role:"user", content: $q}, {role:"assistant", content: $a}]' \
+          "$CONVO" > "$CONVO.tmp" && mv "$CONVO.tmp" "$CONVO"
+        tmpf="$WORK/turn.$$.json"
+        N="$(extract_candidates "$C" "$tmpf")"
+        if [ "$N" -gt 0 ] 2>/dev/null; then
+          jq -s '.[0] + .[1]' "$research" "$tmpf" > "$research.tmp" && mv "$research.tmp" "$research"
+          TOTAL_FREE=$((TOTAL_FREE + N))
+          echo "research: $fm turn $turn contributed $N candidate(s) (harvest: $TOTAL_FREE)" >&2
+          emit status "$fm turn $turn done — $N candidate(s) so far this conversation" "$fm"
+        else
+          echo "research: $fm turn $turn: no new candidates — was that the final word?" >&2
+          emit status "$fm turn $turn: no new candidates in that answer" "$fm"
+          # An empty [] on a follow-up means the model is done — stop asking.
+          case "$C" in *"[]"*|*'[ ]'*) echo "research: $fm says it is done — closing the conversation." >&2; break ;; esac
+        fi
+        turn=$((turn + 1))
       done
-      echo "research: $fm done in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')") — contributed $fm_n candidate(s)" >&2
-      if [ "$fm_n" -gt 0 ]; then
-        _extra="$(followup_rounds "$fm" "$FQ_URL" "$FQ_KEY" "$FQ_TMO" "You helped find free AI model endpoints.")"
-        if [ "$_extra" -gt 0 ] 2>/dev/null; then
-          fm_n=$((fm_n + _extra)); TOTAL_FREE=$((TOTAL_FREE + _extra))
-          echo "research: $fm follow-ups added $_extra more" >&2
-        fi
-      fi
-      emit status "$fm finished — contributed $fm_n candidates (free harvest so far: $TOTAL_FREE)" "$fm"
-      [ "$fm_n" -gt 0 ] && MODEL_USED="${MODEL_USED:+$MODEL_USED, }$fm (free)"
+      echo "research: $fm conversation finished in $(python3 -c "import time; print(f'{time.time() - $_t0:.0f}s')") — harvest $TOTAL_FREE" >&2
+      emit status "$fm conversation closed — free harvest: $TOTAL_FREE" "$fm"
+      [ "$TOTAL_FREE" -gt 0 ] && MODEL_USED="$fm (free, sequential conversation)"
     done
     if [ "$TOTAL_FREE" -gt 0 ]; then
-      echo "research: free harvest: $TOTAL_FREE candidates from the free pool" >&2
+      echo "research: free harvest: $TOTAL_FREE candidates — no paid call needed" >&2
       emit status "free harvest complete — $TOTAL_FREE candidates, no paid call needed" ""
     fi
   else
@@ -424,7 +435,7 @@ PYEOF
     echo "research: free routes failed — falling back to PAID $MODEL via $BASE_URL (web sweep, cap 180s)…" >&2
     emit status "free routes failed — falling back to PAID $MODEL (web sweep, cap 180s)" "$MODEL"
     _t0=$(python3 -c 'import time; print(time.time())')
-    REQ="$(jq -n --arg m "$MODEL" --arg p "$SWEEP_PROMPT" \
+    REQ="$(jq -n --arg m "$MODEL" --arg p "$SWEEP_OPEN$FMT" \
       '{model: $m, max_tokens: 3000, stream: true, messages: [{role:"user", content: $p}]}')"
     if [ -n "$KEY" ]; then
       C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 180 "$BASE_URL/v1/chat/completions" "$KEY")"
