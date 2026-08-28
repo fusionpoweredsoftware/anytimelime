@@ -6,3 +6,5 @@
 openrouter # checked 2026-08-27 ok
 nvidia # checked 2026-08-27 ok
 sambanova # checked 2026-08-27 ok
+pollinations # checked 2026-08-27 no terms published - nothing to violate
+beesonn # checked 2026-08-27 no ToS; project pitch is free/unkeyed/no-tracking

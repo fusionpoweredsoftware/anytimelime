@@ -13,3 +13,8 @@
 # is exactly what they prohibit. Skipped on principle, 2026-08-27.
 edgeone
 tencent
+
+# Cerebras: Terms of Use prohibit using the service for "benchmarking or
+# competitive analysis of the Service, or otherwise to our detriment" — a daily
+# probe publishing latency and verdicts is exactly that. Blacklisted 2026-08-27.
+cerebras
