@@ -101,6 +101,21 @@ resolve_key() { # resolve_key <key_env>
 
 echo "=== free model scan — $(date '+%Y-%m-%d %H:%M') ==="
 
+# Call meter (see research.sh's log_call): when ANYTIMELIME_CALL_LOG is set,
+# every probe appends one JSONL line — vendor, model, key NAME + fingerprint
+# (never the value), duration, verdict. Off unless the caller opts in.
+log_call() { # log_call <kind> <vendor> <model> <key_env|-> <key_fp|-> <duration_s> <note>
+  [ -n "${ANYTIMELIME_CALL_LOG:-}" ] || return 0
+  printf '{"t":"%s","kind":%s,"vendor":%s,"model":%s,"key_env":%s,"key_fp":%s,"dur_s":"%s","note":%s}\n' \
+    "$(date -u +%FT%TZ)" "$(printf '%s' "$1" | jq -Rs .)" "$(printf '%s' "$2" | jq -Rs .)" \
+    "$(printf '%s' "$3" | jq -Rs .)" "$(printf '%s' "$4" | jq -Rs .)" "$(printf '%s' "$5" | jq -Rs .)" \
+    "$6" "$(printf '%s' "$7" | jq -Rs .)" >> "$ANYTIMELIME_CALL_LOG" 2>/dev/null || true
+}
+key_fp() { # key_fp <key-value> — first 8 hex of sha256, or "-" for empty
+  [ -n "${1:-}" ] || { echo "-"; return; }
+  printf '%s' "$1" | shasum -a 256 | cut -c1-8
+}
+
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -325,6 +340,7 @@ probe_one() { # probe_one <id> <base_url> <key> <slot> <vendor>
     else "FAIL: empty response"
     end' 2>/dev/null || echo "FAIL: unparseable")
   printf '  ← %s: %s (%s)\n' "$model" "$verdict" "$duration" >&2
+  log_call probe "$vendor" "$model" "$KEY_ENV_LABEL" "$(key_fp "$key")" "$duration" "$verdict"
 
   {
     printf '%s  %s\n' "$duration" "$model"
@@ -353,6 +369,7 @@ while IFS=$'\t' read -r id vendor base needs keyenv src docs; do
   else
     k=""
   fi
+  case "$keyenv" in ""|null) KEY_ENV_LABEL="-" ;; *) KEY_ENV_LABEL="$keyenv" ;; esac
   probe_one "$id" "$base" "$k" "$sl" "$vendor" &
   if [ $((slot % JOBS)) -eq 0 ]; then wait; fi
 done < "$CAND_TSV"

@@ -85,6 +85,23 @@ trap 'rm -rf "$WORK"
 
 atomic_mv() { local dest="$1" tmp="${1}.tmp.$$"; cat > "$tmp" && mv -f "$tmp" "$dest"; }
 
+# Call meter: when ANYTIMELIME_CALL_LOG points at a file, every outbound
+# catalog/model call appends one JSONL line — timestamp, kind, vendor, model,
+# and the key's NAME + short fingerprint (never the value). Off unless the
+# caller (blog-gen) opts in; standalone runs of the public repo log nothing.
+# Information is valued: per-vendor and per-key spend is a meter like any other.
+log_call() { # log_call <kind> <vendor> <model> <key_env|-> <key_fp|-> <duration_s> <note>
+  [ -n "${ANYTIMELIME_CALL_LOG:-}" ] || return 0
+  printf '{"t":"%s","kind":%s,"vendor":%s,"model":%s,"key_env":%s,"key_fp":%s,"dur_s":"%s","note":%s}\n' \
+    "$(date -u +%FT%TZ)" "$(printf '%s' "$1" | jq -Rs .)" "$(printf '%s' "$2" | jq -Rs .)" \
+    "$(printf '%s' "$3" | jq -Rs .)" "$(printf '%s' "$4" | jq -Rs .)" "$(printf '%s' "$5" | jq -Rs .)" \
+    "$6" "$(printf '%s' "$7" | jq -Rs .)" >> "$ANYTIMELIME_CALL_LOG" 2>/dev/null || true
+}
+key_fp() { # key_fp <key-value> — first 8 hex of sha256, or "-" for empty
+  [ -n "${1:-}" ] || { echo "-"; return; }
+  printf '%s' "$1" | shasum -a 256 | cut -c1-8
+}
+
 # --- 1. Deterministic floor: keyless public catalogs ------------------------
 # OpenRouter's catalog is public (no key); local Ollama is keyless. These are
 # the reproducible candidates the model research layers on top of, and the
@@ -123,6 +140,7 @@ fi
 add_catalog() { # add_catalog <vendor> <catalog-url> <base_url> <key_env>
   local vendor="$1" url="$2" base="$3" keyenv="$4" cat
   cat="$(curl -s -m 20 "$url" || true)"
+  log_call catalog "$vendor" "(models list)" "-" "-" 20 "$url"
   printf '%s' "$cat" | jq -e '.data' >/dev/null 2>&1 || return 0
   local n=0 id
   while IFS= read -r id; do
@@ -308,8 +326,11 @@ PYEOF
         _last="$_sz"
       done ) &
     local hb=$!
+    local _t0=$(python3 -c 'import time; print(time.time())')
     wait "$pid" 2>/dev/null || true
     kill "$hb" 2>/dev/null || true
+    log_call research "$url" "$label" "${ANYTIMELIME_CALL_KEY_ENV:--}" "$(key_fp "$bearer")" \
+      "$(python3 -c "import time; print(f'{time.time() - $_t0:.0f}')")" "$(wc -c < "$cf" | tr -d ' ') bytes"
     cat "$cf" 2>/dev/null || true
   }
 
@@ -378,8 +399,10 @@ PYEOF
   fi
   if [ -n "$FREE_ENDPOINT" ]; then
     FQ_URL="$FREE_ENDPOINT/v1/chat/completions"; FQ_KEY=""; FQ_TMO=600
+    ANYTIMELIME_CALL_KEY_ENV="-"
   else
     FQ_URL="https://openrouter.ai/api/v1/chat/completions"; FQ_KEY="$OR_KEY"; FQ_TMO=180
+    ANYTIMELIME_CALL_KEY_ENV="OPENROUTER_API_KEY"
   fi
   if [ -n "$FORCE_MODEL" ]; then
     echo "research: --force-model — $FORCE_MODEL is the researcher; free pool skipped by request." >&2
@@ -506,6 +529,7 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
     REQ="$(jq -n --arg m "$MODEL" --arg p "$SWEEP_OPEN$FMT" \
       '{model: $m, max_tokens: 16000, stream: true, messages: [{role:"user", content: $p}]}')"
     if [ -n "$KEY" ]; then
+      ANYTIMELIME_CALL_KEY_ENV="RESEARCH_KEY"
       C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 600 "$BASE_URL/v1/chat/completions" "$KEY")"
     else
       C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 600 "$BASE_URL/v1/chat/completions")"
