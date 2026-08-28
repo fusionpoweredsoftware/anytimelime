@@ -186,6 +186,7 @@ signup_url() { # signup_url <key_env>
     NVIDIA_API_KEY)    echo "https://build.nvidia.com" ;;
     SAMBANOVA_API_KEY) echo "https://cloud.sambanova.ai/apis" ;;
     HF_TOKEN)          echo "https://huggingface.co/settings/tokens" ;;
+    POLLINATIONS_API_KEY) echo "https://enter.pollinations.ai/key" ;;
     OPENROUTER_API_KEY) echo "https://openrouter.ai/keys" ;;
     *) echo "" ;;
   esac

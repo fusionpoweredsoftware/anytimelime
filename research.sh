@@ -543,7 +543,9 @@ if [ -n "$BLACKLIST" ]; then
     | [($r[0] + $f[0])[] | (.vendor // "" | ascii_downcase) as $v
        | select([$bad[] | select(. != "") as $p | select($v | contains($p))] | length == 0)
        | select(($ok | length == 0) or ([$ok[] | select(. != "") as $o | select($v | contains($o))] | length > 0))]
-    | group_by(.vendor + "" + .id)
+        | map(if ((.vendor // "") | ascii_downcase | contains("pollinations"))
+         then .needs_key = true | .key_env = "POLLINATIONS_API_KEY" else . end)
+| group_by(.vendor + "" + .id)
     | map(reduce .[] as $x ({}; . * $x))
     | sort_by([.needs_key, .vendor, .id])
   ' | atomic_mv "$OUT"
@@ -552,7 +554,9 @@ if [ -n "$BLACKLIST" ]; then
 else
   jq -n --slurpfile f "$floor" --slurpfile r "$research" '
     ($r[0] + $f[0])
-    | group_by(.vendor + "" + .id)
+        | map(if ((.vendor // "") | ascii_downcase | contains("pollinations"))
+         then .needs_key = true | .key_env = "POLLINATIONS_API_KEY" else . end)
+| group_by(.vendor + "" + .id)
     | map(reduce .[] as $x ({}; . * $x))
     | sort_by([.needs_key, .vendor, .id])
   ' | atomic_mv "$OUT"
