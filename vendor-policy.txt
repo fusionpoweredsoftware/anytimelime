@@ -1,0 +1,8 @@
+# vendor-policy.txt - one vendor per line, present = terms have been read and
+# cleared for listing. Any NEW vendor arriving via research or a catalog that
+# is not in this file (and not blacklisted) is held out of the candidate list
+# until someone reads its terms and adds it here. Format:
+#   vendor-name # checked YYYY-MM-DD ok|notes
+openrouter # checked 2026-08-27 ok
+nvidia # checked 2026-08-27 ok
+sambanova # checked 2026-08-27 ok

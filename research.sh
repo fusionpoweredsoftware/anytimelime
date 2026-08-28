@@ -530,16 +530,25 @@ fi
 # are dropped here: never probed, never listed.
 BLACKLIST="$(grep -v '^[[:space:]]*#' "$SCRIPT_DIR/vendor-blacklist.txt" 2>/dev/null \
              | grep -v '^[[:space:]]*$' | tr 'A-Z' 'a-z' | paste -sd ' ' -)"
+# Policy gate: vendors whose terms have NOT been read (absent from
+# vendor-policy.txt) are held out of the candidate list - new vendors get a
+# policy check before they are ever probed or listed. Blacklist wins over
+# policy either way.
+POLICY_OK="$(grep -v '^[[:space:]]*#' "$SCRIPT_DIR/vendor-policy.txt" 2>/dev/null \
+             | grep -v '^[[:space:]]*$' | cut -f1 | tr 'A-Z' 'a-z' | paste -sd ' ' -)"
 if [ -n "$BLACKLIST" ]; then
-  jq -n --slurpfile f "$floor" --slurpfile r "$research" --arg bl "$BLACKLIST" '
+  jq -n --slurpfile f "$floor" --slurpfile r "$research" --arg bl "$BLACKLIST" --arg po "$POLICY_OK" '
     ($bl | split(" ")) as $bad
+    | ($po | split(" ")) as $ok
     | [($r[0] + $f[0])[] | (.vendor // "" | ascii_downcase) as $v
-       | select([$bad[] | select(. != "") as $p | select($v | contains($p))] | length == 0)]
+       | select([$bad[] | select(. != "") as $p | select($v | contains($p))] | length == 0)
+       | select(($ok | length == 0) or ([$ok[] | select(. != "") as $o | select($v | contains($o))] | length > 0))]
     | group_by(.vendor + "" + .id)
     | map(reduce .[] as $x ({}; . * $x))
     | sort_by([.needs_key, .vendor, .id])
   ' | atomic_mv "$OUT"
   echo "research: blacklist active — $BLACKLIST" >&2
+  echo "research: policy gate active — new vendors are held out until their terms are read (vendor-policy.txt)." >&2
 else
   jq -n --slurpfile f "$floor" --slurpfile r "$research" '
     ($r[0] + $f[0])
