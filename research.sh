@@ -212,7 +212,7 @@ Work at your own pace — correctness over speed. '
   # blog'"'"'s Tuesday section and anytimelime.com/tool-call.html.
   if [ "${RESEARCH_TUESDAY:-0}" = 1 ]; then
     SWEEP_OPEN="$SWEEP_OPEN
-PART 3 (Tool-Call Tuesday extra): techniques and tools that amplify SMALL models into tool-call AIs — prompt scaffolds, JSON-schema-constrained decoding, grammar enforcement, retry/repair loops, small fine-tunes. Spend 2-3 searches on what is new or newly proven. Report each as {\"name\": ..., \"method\": ..., \"url\": ...} in the same JSON array."
+PART 3 (Tool-Call Tuesday extra): techniques and tools that amplify SMALL models into tool-call AIs (TCOS — tool-call-of-sorts: anything not born a tool-call model that can drive tools anyway) — prompt scaffolds, JSON-schema-constrained decoding, grammar enforcement, retry/repair loops, small fine-tunes. Spend 2-3 searches on what is new or newly proven. Report each as {\"name\": ..., \"method\": ..., \"url\": ...} in the same JSON array."
   fi
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
