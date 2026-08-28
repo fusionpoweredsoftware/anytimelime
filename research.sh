@@ -526,12 +526,28 @@ fi
 # --- 3. Merge, dedup, write -------------------------------------------------
 # Dedup by (vendor, id). Catalog wins over research on conflict (catalog is
 # verified-fetchable); needs_key/key_env from the winning record.
-jq -n --slurpfile f "$floor" --slurpfile r "$research" '
-  ($r[0] + $f[0])
-  | group_by(.vendor + "" + .id)
-  | map(reduce .[] as $x ({}; . * $x))
-  | sort_by([.needs_key, .vendor, .id])
-' | atomic_mv "$OUT"
+# Blacklisted vendors (vendor-blacklist.txt — hostile terms, bait tiers)
+# are dropped here: never probed, never listed.
+BLACKLIST="$(grep -v '^[[:space:]]*#' "$SCRIPT_DIR/vendor-blacklist.txt" 2>/dev/null \
+             | grep -v '^[[:space:]]*$' | tr 'A-Z' 'a-z' | paste -sd ' ' -)"
+if [ -n "$BLACKLIST" ]; then
+  jq -n --slurpfile f "$floor" --slurpfile r "$research" --arg bl "$BLACKLIST" '
+    ($bl | split(" ")) as $bad
+    | [($r[0] + $f[0])[] | (.vendor // "" | ascii_downcase) as $v
+       | select([$bad[] | select(. != "") as $p | select($v | contains($p))] | length == 0)]
+    | group_by(.vendor + "" + .id)
+    | map(reduce .[] as $x ({}; . * $x))
+    | sort_by([.needs_key, .vendor, .id])
+  ' | atomic_mv "$OUT"
+  echo "research: blacklist active — $BLACKLIST" >&2
+else
+  jq -n --slurpfile f "$floor" --slurpfile r "$research" '
+    ($r[0] + $f[0])
+    | group_by(.vendor + "" + .id)
+    | map(reduce .[] as $x ({}; . * $x))
+    | sort_by([.needs_key, .vendor, .id])
+  ' | atomic_mv "$OUT"
+fi
 
 echo "research: wrote $OUT — $(jq 'length' "$OUT") candidates across $(jq '[.[].vendor] | unique | length' "$OUT") vendors"
 [ "${FLOOR_ONLY:-0}" = 0 ] && emit done "done — $(jq 'length' "$OUT") candidates written to candidates.json" "" || true

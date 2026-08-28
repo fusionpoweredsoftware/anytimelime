@@ -1,0 +1,11 @@
+# vendor-blacklist.txt — vendors never probed, never listed. One pattern per
+# line, matched case-insensitively as a substring of the vendor name.
+# Lines starting with # are comments. Committed on purpose: a vendor everyone
+# agrees is off-limits (hostile terms, bait-and-switch free tier, abuse) is
+# off-limits for every clone.
+#
+# EdgeOne Makers (Tencent): their AUP/AI Terms ban publishing any performance
+# or benchmark test without prior written consent — probing and reporting them
+# is exactly what they prohibit. Skipped on principle, 2026-08-27.
+edgeone
+tencent
