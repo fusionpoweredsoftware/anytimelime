@@ -206,13 +206,13 @@ PART 1 (spend at most 2-3 searches here, then stop): some websites publish a sec
 PART 2 (most of your effort): currently-free AI chat endpoints that speak the OpenAI-compatible /v1/chat/completions API — keyless ones and free-tier vendors beyond the big well-known catalogs. Search one query at a time, read the results, then decide the next. NARRATE as you work — before each search say what you are looking for; after it say what you found — then end with the JSON array.
 
 Work at your own pace — correctness over speed. '
-  # Tool-Call Tuesday (blog-gen sets RESEARCH_TUESDAY=1): the weekly sweep
+  # Tech Talk Tuesday (blog-gen sets RESEARCH_TUESDAY=1): the weekly sweep
   # also hunts METHODS — scaffolds, constrained decoding, fine-tunes — for
   # making small non-tool models behave like tool-call AIs. Findings feed the
   # blog'"'"'s Tuesday section and anytimelime.com/tool-call.html.
   if [ "${RESEARCH_TUESDAY:-0}" = 1 ]; then
     SWEEP_OPEN="$SWEEP_OPEN
-PART 3 (Tool-Call Tuesday extra): techniques and tools that amplify SMALL models into tool-call AIs (TCOS — tool-call-of-sorts: anything not born a tool-call model that can drive tools anyway) — prompt scaffolds, JSON-schema-constrained decoding, grammar enforcement, retry/repair loops, small fine-tunes. Spend 2-3 searches on what is new or newly proven. Report each as {\"name\": ..., \"method\": ..., \"url\": ...} in the same JSON array."
+PART 3 (Tech Talk Tuesday extra): techniques and tools that amplify SMALL models into tool-call AIs (TCOS — tool-call-of-sorts: anything not born a tool-call model that can drive tools anyway) — prompt scaffolds, JSON-schema-constrained decoding, grammar enforcement, retry/repair loops, small fine-tunes. Spend 2-3 searches on what is new or newly proven. Report each as {\"name\": ..., \"method\": ..., \"url\": ...} in the same JSON array."
   fi
 
   # extract_candidates <content> <outfile> — the model may wrap JSON in fences
@@ -531,7 +531,7 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
   fi
 fi
 
-# Tool-Call Tuesday: persist the sweep's method-hunt narration (the scaffold/
+# Tech Talk Tuesday: persist the sweep's method-hunt narration (the scaffold/
 # grammar/fine-tune findings from SWEEP_OPEN part 3) so the blogger can read
 # it — free conversation transcripts plus any paid reply.
 if [ "${RESEARCH_TUESDAY:-0}" = 1 ] && [ -n "${RESEARCH_TUESDAY_OUT:-}" ]; then
@@ -540,7 +540,7 @@ if [ "${RESEARCH_TUESDAY:-0}" = 1 ] && [ -n "${RESEARCH_TUESDAY_OUT:-}" ]; then
     done
     [ -n "${C:-}" ] && printf '%s\n' "$C"
   } > "$RESEARCH_TUESDAY_OUT" 2>/dev/null || true
-  echo "research: Tool-Call Tuesday methods narration → $RESEARCH_TUESDAY_OUT" >&2
+  echo "research: Tech Talk Tuesday methods narration → $RESEARCH_TUESDAY_OUT" >&2
 fi
 
 # --- 3. Merge, dedup, write -------------------------------------------------
