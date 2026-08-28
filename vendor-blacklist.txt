@@ -4,6 +4,10 @@
 # agrees is off-limits (hostile terms, bait-and-switch free tier, abuse) is
 # off-limits for every clone.
 #
+# POLICY RESEARCH DAY: the 28th of every month, re-read the terms of every
+# listed vendor and current blacklist entries. Blacklist is only as good as
+# its last policy read.
+#
 # EdgeOne Makers (Tencent): their AUP/AI Terms ban publishing any performance
 # or benchmark test without prior written consent — probing and reporting them
 # is exactly what they prohibit. Skipped on principle, 2026-08-27.
