@@ -449,6 +449,16 @@ print(json.dumps({"updated": None, "probed": len(out),
 PYEOF
   mv -f "$RESULTS_JSON.tmp" "$RESULTS_JSON"
   echo "Wrote results JSON: $RESULTS_JSON ($(jq '.results|length' "$RESULTS_JSON") records)"
+
+  # --- 4.5 FE meter integration (1 FE gauge for PASSING models) ---
+  # Run the independent-research FE meter on each PASSING model to add fe_reading.
+  # This is a lightweight scan: 1 run, 2k length only. Full calibration is separate.
+  if [ "${#PASSING[@]}" -gt 0 ]; then
+    echo
+    echo "[FE meter] gauging PASSING models for 1 FE (Fidelity-Enough)..."
+    python3 "$SCRIPT_DIR/fe-postprocess.py" "$RESULTS_JSON"
+    echo "[FE meter] added fe_reading to PASSING models in $RESULTS_JSON"
+  fi
 fi
 
 # --- 5. OpenRouter-subset tier config (or.sh / lime.sh backward compat) -----

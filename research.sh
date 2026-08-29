@@ -43,7 +43,18 @@ for _a in "$@"; do
   case "$_a" in
     --floor-only)   FLOOR_ONLY=1 ;;
     --force)        FORCE=1 ;;
+    # Vendor-named force flags: the flag itself says where the model runs.
+    #   --force-model-ollama <id> → paid gateway upstream = local Ollama (:11434)
+    #   --force-model-zai    <id> → upstream = Z.ai coding API (key from config)
+    --force-model-ollama) _prev="fm"; FORCE_VENDOR="ollama" ;;
+    --force-model-ollama=*) FORCE_MODEL="${_a#--force-model-ollama=}"; FORCE_VENDOR="ollama" ;;
+    --force-model-zai)    _prev="fm"; FORCE_VENDOR="zai" ;;
+    --force-model-zai=*)    FORCE_MODEL="${_a#--force-model-zai=}"; FORCE_VENDOR="zai" ;;
+    # Bare --force-model <id>: vendor comes from the environment
+    # (RESEARCH_UPSTREAM_BASE_URL/_KEY), defaulting to Ollama. Kept for
+    # backwards compatibility with existing callers.
     --force-model)  _prev="fm" ;;
+    --force-model=*) FORCE_MODEL="${_a#--force-model=}" ;;
     *) if [ "$_prev" = "fm" ]; then
          FORCE_MODEL="$_a"; _prev=""
        else
@@ -51,13 +62,37 @@ for _a in "$@"; do
        fi ;;
   esac
 done
-# --force-model <model>: this ONE named model IS the researcher (implies
-# --force). The free-pool conversation is skipped and the forced model runs
-# the web sweep itself through the paid gateway harness.
+# Forced researcher (implies --force): this ONE named model IS the researcher.
+# The free-pool conversation is skipped and the forced model runs the web sweep
+# itself through the paid gateway harness. Resolve the vendor first so the
+# gateway is born pointing at the right upstream.
 if [ -n "$FORCE_MODEL" ]; then
   MODEL="$FORCE_MODEL"
   FORCE=1
-  echo "research: --force-model — $MODEL is the researcher; free pool skipped." >&2
+  case "${FORCE_VENDOR:-}" in
+    zai)
+      # Z.ai coding API (Anthropic-compatible). Key + base URL come from the
+      # repo-root config.json — the same file zai.sh uses (ZAI_CONFIG overrides).
+      ZAI_CONFIG="${ZAI_CONFIG:-$SCRIPT_DIR/../config.json}"
+      if [ ! -s "$ZAI_CONFIG" ]; then
+        echo "research: --force-model-zai: no config at $ZAI_CONFIG." >&2; exit 2
+      fi
+      ZAI_KEY="$(jq -r '.ANTHROPIC_AUTH_TOKEN // empty' "$ZAI_CONFIG")"
+      ZAI_BASE="$(jq -r '.ANTHROPIC_BASE_URL // "https://api.z.ai/api/anthropic"' "$ZAI_CONFIG")"
+      [ -n "$ZAI_KEY" ] || { echo "research: --force-model-zai: no ANTHROPIC_AUTH_TOKEN in $ZAI_CONFIG." >&2; exit 2; }
+      export RESEARCH_UPSTREAM_BASE_URL="$ZAI_BASE" RESEARCH_UPSTREAM_KEY="$ZAI_KEY"
+      echo "research: --force-model-zai — $MODEL is the researcher via Z.ai ($ZAI_BASE); free pool skipped." >&2
+      ;;
+    ollama)
+      # Explicit Ollama: clear any inherited upstream override so the gateway
+      # uses its default local-Ollama upstream.
+      unset RESEARCH_UPSTREAM_BASE_URL RESEARCH_UPSTREAM_KEY
+      echo "research: --force-model-ollama — $MODEL is the researcher via local Ollama; free pool skipped." >&2
+      ;;
+    *)
+      echo "research: --force-model — $MODEL is the researcher (upstream from env, default Ollama); free pool skipped." >&2
+      ;;
+  esac
 fi
 
 # Reuse window: if candidates.json was written less than RESEARCH_TTL seconds
@@ -242,12 +277,22 @@ PART 3 (Tech Talk Tuesday extra): techniques and tools that amplify SMALL models
     python3 - "$1" <<'PYEOF' > "$2" 2>/dev/null || echo '[]' > "$2"
 import json, re, sys
 src = sys.argv[1]
-m = re.search(r'\[.*\]', src, re.S)
-if not m:
-    print('[]'); sys.exit(0)
-try:
-    arr = json.loads(m.group(0))
-except Exception:
+# The model ends its reply with the JSON array, but the prose ABOVE it may
+# contain markdown links ("[OpenRouter](...)"). A greedy first-"[" match would
+# glue link text and array into garbage. Scan bracket starts from the END and
+# take the first (rightmost) span that parses as a JSON array.
+arr = None
+last = src.rfind(']')
+for i in [m.start() for m in re.finditer(r'\[', src)][::-1]:
+    if i > last: continue
+    try:
+        cand = json.loads(src[i:last + 1])
+        if isinstance(cand, list):
+            arr = cand
+            break
+    except Exception:
+        continue
+if arr is None:
     print('[]'); sys.exit(0)
 out = []
 for o in arr:
@@ -362,8 +407,16 @@ PYEOF
   # direct OpenRouter calls — free either way.
   FREE_GATEWAY_PORT="${FREE_GATEWAY_PORT:-8022}"
   ORPROXY_PORT="${ORPROXY_PORT:-8099}"
-  GATEWAY_DIR="${RAZZLE_GATEWAY_DIR:-$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/razzle-dazzle-api}"
-  UVICORN_BIN="${UVICORN_BIN:-$(command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
+  # RAZZLE_GATEWAY_DIR wins; otherwise try the known checkouts in order
+  # (macOS first, then this repo's sibling checkout).
+  GATEWAY_DIR="${RAZZLE_GATEWAY_DIR:-}"
+  if [ -z "$GATEWAY_DIR" ]; then
+    for _gd in "$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/razzle-dazzle-api" \
+               "$HOME/Projects/anytimelime-trio/razzle-dazzle-api"; do
+      [ -d "$_gd" ] && { GATEWAY_DIR="$_gd"; break; }
+    done
+  fi
+  UVICORN_BIN="${UVICORN_BIN:-$(command -v uv >/dev/null 2>&1 && echo "uv run uvicorn" || command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
   FREE_ENDPOINT=""
   start_free_stack() {
     [ -d "$GATEWAY_DIR" ] || { echo "research: no gateway dir at $GATEWAY_DIR" >&2; return 1; }
@@ -377,7 +430,7 @@ PYEOF
       ( cd "$GATEWAY_DIR" && exec env -u ANTHROPIC_API_KEY -u ZAI_API_KEY -u ZAI_CODE_MODEL -u ZAI_ANTHROPIC_BASE_URL -u HYBRID_WEIGHT \
           ANTHROPIC_BASE_URL="http://127.0.0.1:$ORPROXY_PORT" ANTHROPIC_AUTH_TOKEN=local-free-stack \
           CLAUDE_CODE_API_MODELS_PATH="$SCRIPT_DIR/.free-gateway/models.json" \
-          "$UVICORN_BIN" claude_code_api.main:app --host 127.0.0.1 --port "$FREE_GATEWAY_PORT" ) >/dev/null 2>&1 &
+          $UVICORN_BIN claude_code_api.main:app --host 127.0.0.1 --port "$FREE_GATEWAY_PORT" ) >/dev/null 2>&1 &
       FREE_GATEWAY_PID=$!
     fi
     local i
@@ -478,17 +531,42 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
     # the same trick as the free stack. The operator never has to remember a
     # launch ritual; the generator does what it needs.
     PAID_PORT="${BASE_URL##*:}"; PAID_PORT="${PAID_PORT%%/*}"
+    # Upstream override (e.g. --force-model-zai): NEVER trust an existing
+    # listener — one on the default port was born pointed at some other
+    # upstream (Ollama) and would reject the forced model or bill the wrong
+    # account. Claim a per-run port (collision with a stale instance is
+    # near-impossible) and always self-start.
+    if [ -n "${RESEARCH_UPSTREAM_BASE_URL:-}" ]; then
+      PAID_PORT="${RESEARCH_UPSTREAM_PORT:-$((8023 + $$ % 500))}"
+      BASE_URL="http://127.0.0.1:$PAID_PORT"
+    fi
     start_paid_gateway() {
-      local dir="${RAZZLE_GATEWAY_DIR:-$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/razzle-dazzle-api}"
-      local uv="${UVICORN_BIN:-$(command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
+      local dir="${RAZZLE_GATEWAY_DIR:-}"
+      if [ -z "$dir" ]; then
+        for _gd in "$HOME/Projects/ClaudeCodeProjects/computatron/devenv-service/razzle-dazzle-api" \
+                   "$HOME/Projects/anytimelime-trio/razzle-dazzle-api"; do
+          [ -d "$_gd" ] && { dir="$_gd"; break; }
+        done
+      fi
+      local uv="${UVICORN_BIN:-$(command -v uv >/dev/null 2>&1 && echo "uv run uvicorn" || command -v uvicorn || echo /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn)}"
       [ -d "$dir" ] || { echo "research: no gateway dir at $dir — cannot self-start the paid gateway." >&2; return 1; }
-      # Only Ollama is authorized as the paid upstream. Ollama speaks the
-      # Anthropic protocol natively (POST /v1/messages), so the gateway points
-      # straight at it — and every z.ai var is stripped so nothing can ever
-      # route to the personal z.ai account, even if set in the environment.
-      curl -s -m 5 http://localhost:11434/v1/models >/dev/null 2>&1 \
-        || { echo "research: Ollama is not running on :11434 — cannot start the paid gateway." >&2; return 1; }
-      lsof -iTCP:"$PAID_PORT" -sTCP:LISTEN >/dev/null 2>&1 && return 0   # someone already serves it
+      # Only Ollama is authorized as the paid upstream — unless the caller
+      # explicitly exports another Anthropic-protocol upstream
+      # (RESEARCH_UPSTREAM_BASE_URL/_KEY, e.g. blog-gen's --force-model-zai
+      # pointing at api.z.ai). Ollama speaks the Anthropic protocol natively
+      # (POST /v1/messages), so the gateway points straight at it — and every
+      # z.ai var is stripped so ambient environment can never route to the
+      # personal z.ai account on its own.
+      UPSTREAM_URL="${RESEARCH_UPSTREAM_BASE_URL:-http://localhost:11434}"
+      UPSTREAM_KEY="${RESEARCH_UPSTREAM_KEY:-ollama-local}"
+      if [ -z "${RESEARCH_UPSTREAM_BASE_URL:-}" ]; then
+        curl -s -m 5 http://localhost:11434/v1/models >/dev/null 2>&1 \
+          || { echo "research: Ollama is not running on :11434 — cannot start the paid gateway." >&2; return 1; }
+      fi
+      # Override mode: per-run port, always self-start — skip the reuse check.
+      [ -z "${RESEARCH_UPSTREAM_BASE_URL:-}" ] \
+        && lsof -iTCP:"$PAID_PORT" -sTCP:LISTEN >/dev/null 2>&1 \
+        && return 0   # someone already serves it
       mkdir -p "$SCRIPT_DIR/.paid-gateway"
       jq -n --arg id "$MODEL" '{default_model:$id, aliases:{},
         models:[{id:$id, name:$id, description:"paid researcher via the razzle-dazzle harness",
@@ -496,9 +574,10 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
                  supports_streaming:true, supports_tools:true}]}' > "$SCRIPT_DIR/.paid-gateway/models.json"
       ( cd "$dir" && exec env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
           -u ZAI_API_KEY -u ZAI_CODE_MODEL -u ZAI_ANTHROPIC_BASE_URL -u HYBRID_WEIGHT \
-          ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_AUTH_TOKEN=ollama-local \
+          ANTHROPIC_BASE_URL="$UPSTREAM_URL" ANTHROPIC_AUTH_TOKEN="$UPSTREAM_KEY" \
+          CLAUDE_CODE_MAX_OUTPUT_TOKENS="${RESEARCH_MAX_OUTPUT_TOKENS:-32000}" \
           CLAUDE_CODE_API_MODELS_PATH="$SCRIPT_DIR/.paid-gateway/models.json" \
-          "$uv" claude_code_api.main:app --host 127.0.0.1 --port "$PAID_PORT" ) >/tmp/razzle-"$PAID_PORT".log 2>&1 &
+          $uv claude_code_api.main:app --host 127.0.0.1 --port "$PAID_PORT" ) >/tmp/razzle-"$PAID_PORT".log 2>&1 &
       PAID_GATEWAY_PID=$!
       local i
       for i in $(seq 1 15); do
@@ -527,7 +606,7 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
     # leave room for a full search story plus the final array. No rush: the
     # blog may take an hour.
     REQ="$(jq -n --arg m "$MODEL" --arg p "$SWEEP_OPEN$FMT" \
-      '{model: $m, max_tokens: 16000, stream: true, messages: [{role:"user", content: $p}]}')"
+      '{model: $m, max_tokens: 32000, stream: true, messages: [{role:"user", content: $p}]}')"
     if [ -n "$KEY" ]; then
       ANYTIMELIME_CALL_KEY_ENV="RESEARCH_KEY"
       C="$(printf '%s' "$REQ" | stream_curl "$MODEL" 600 "$BASE_URL/v1/chat/completions" "$KEY")"
@@ -542,9 +621,31 @@ Read your own answer back. What is incomplete or unverified in it? Pick the ONE 
         echo "research: $MODEL (paid fallback) returned $N candidates"
         emit status "$MODEL (paid fallback) returned $N candidates — keeping them" "$MODEL"
       else
-        echo "research: $MODEL replied but with no usable candidate list — relying on floor." >&2
-        emit status "$MODEL replied but with no usable candidate list — relying on floor" "$MODEL"
-        echo '[]' > "$research"
+        # The reply buried or lost the array — often the sweep's narration
+        # got truncated mid-sentence before the JSON landed. ONE short,
+        # cheap rescue: hand the model its own notes back and ask for just
+        # the array. If that also fails, fall to the floor as before.
+        echo "research: $MODEL reply had no candidate array — one short rescue follow-up…" >&2
+        emit status "$MODEL reply truncated — asking once more for just the JSON array" "$MODEL"
+        _notes="$(printf '%s' "$C" | tail -c 20000)"
+        _rq="$(jq -n --arg m "$MODEL" --arg n "$_notes" \
+          '{model: $m, max_tokens: 8000, stream: true,
+            messages: [{role:"user", content: ("These are your research notes, possibly cut off mid-sentence: " + $n + "\n\nOutput ONLY the final JSON array of free OpenAI-compatible chat endpoints you verified — same schema as before ({\"id\",\"vendor\",\"base_url\",\"needs_key\",\"key_env\",\"docs\"}), one line, no prose, no markdown fences. Include only endpoints you actually saw evidence for. If none, output [].")}]}')"
+        if [ -n "$KEY" ]; then
+          C2="$(printf '%s' "$_rq" | stream_curl "$MODEL" 300 "$BASE_URL/v1/chat/completions" "$KEY")"
+        else
+          C2="$(printf '%s' "$_rq" | stream_curl "$MODEL" 300 "$BASE_URL/v1/chat/completions")"
+        fi
+        N="$(extract_candidates "${C2:-}" "$research")"
+        if [ "$N" -gt 0 ] 2>/dev/null; then
+          MODEL_USED="$MODEL (paid fallback, rescue follow-up)"
+          echo "research: $MODEL rescue follow-up returned $N candidates"
+          emit status "$MODEL rescue follow-up returned $N candidates — keeping them" "$MODEL"
+        else
+          echo "research: $MODEL replied but with no usable candidate list — relying on floor." >&2
+          emit status "$MODEL replied but with no usable candidate list — relying on floor" "$MODEL"
+          echo '[]' > "$research"
+        fi
       fi
     else
       echo '[]' > "$research"

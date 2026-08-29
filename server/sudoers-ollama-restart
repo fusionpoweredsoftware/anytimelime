@@ -1,0 +1,12 @@
+# sudoers snippet — lets andrey restart/check the ollama service WITHOUT a
+# password, so Claude (running as andrey) can recover a dead-CUDA ollama
+# server without asking you to type sudo every time.
+#
+# INSTALL (one time, you run this):
+#   sudo install -m 440 -o root -g root \
+#     ~/Projects/anytimelime-trio/anytimelime/server/sudoers-ollama-restart \
+#     /etc/sudoers.d/ollama-restart
+#
+# Scope is deliberately narrow: ONLY restart/status/stop of ollama.service.
+# No other root powers are granted.
+andrey ALL=(root) NOPASSWD: /usr/bin/systemctl restart ollama, /usr/bin/systemctl restart ollama.service, /usr/bin/systemctl status ollama, /usr/bin/systemctl status ollama.service, /usr/bin/systemctl stop ollama, /usr/bin/systemctl stop ollama.service
